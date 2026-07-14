@@ -5,7 +5,7 @@ import "time"
 type RedisConfig struct {
 	Addr     string `yaml:"addr"`      // Redis地址
 	Password string `yaml:"password"`  // Redis密码
-	DB       int    `yaml:"mysql"`     // Redis数据库
+	DB       int    `yaml:"db"`        // Redis数据库
 	PoolSize int    `yaml:"pool_size"` // 连接池大小
 }
 
