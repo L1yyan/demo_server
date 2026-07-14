@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package logic;
+
+option go_package = "demo_server/gen/logic;logicpb";
+
+/************ service ************/
+service LogicService {
+  // 登录  
+  rpc Login(LoginReq) returns (AuthResp);
+
+  // 注册
+  rpc Register(RegisterReq) returns (AuthResp);
+
+  // 发送验证码
+  rpc SendVerifyCode(SendVerifyCodeReq) returns(SendVerifyCodeResp);
+}
+
+/************ message  ************/
+message LoginReq {
+  string email = 1; // 邮箱
+  string password = 2; // 密码
+}
+
+message RegisterReq {
+  string email = 1;
+  string verification_code = 2; // 验证码
+}
+
+message AuthResp {
+  bool status = 1; // 状态
+  string content = 2; // 返回信息
+  string access_token = 3; // 短token
+  string refresh_token = 4; // 长期token
+}
+
+message SendVerifyCodeReq {
+  string email = 1;
+}
+
+message SendVerifyCodeResp {
+  bool status = 1;
+  string content = 2;
+  string verification_code = 3;
+}

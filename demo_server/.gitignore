@@ -1,0 +1,19 @@
+# 二进制文件
+
+# Go 相关
+go.sum
+vendor/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 环境变量
+.env
+*.local
+
+# 生成的文件
+*.pb.go
+*_grpc.pb.go
