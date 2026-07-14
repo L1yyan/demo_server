@@ -1,0 +1,38 @@
+#日志
+log:
+  path: "bin/logs"
+
+#验证码邮箱
+email:
+  host: smtp.126.com
+  port: 465
+  username: "liyansdemo@126.com"
+  password: WGsTf3AzBxBFRyyX
+
+#Jwt
+jwt:
+  secretKey: "rM8jI7hB6mH7tZ1nN5"
+  tokenExpire: "1h"
+  refreshExpire: "168h"
+  tokenHeaderKey: "Authorization"
+  refreshTokenKey: "Refresh-Token"
+  newAccessTokenKey: "New-Access-Token"
+  skipPaths:  #跳过jwt验证
+    - ""
+
+#logic_server
+logic_server:
+  redis:
+    addr: "127.0.0.1:6379"
+    password: "Liyan927927."
+    db: 0
+    pool_size: 20
+  mongodb:
+    addr: "127.0.0.1:27017"
+    username: "demo_server"
+    password: "Liyan927927."
+    database: "demo_server"
+    authSource: "demo_server"
+    max_idle_conns: 10
+    max_open_conns: 100
+    conn_max_idle_time: 300
