@@ -22,6 +22,7 @@ jwt:
 
 #logic_server
 logic_server_01:
+  listen_addr: ":8080"
   redis:
     addr: "127.0.0.1:6379"
     password: "Liyan927927."

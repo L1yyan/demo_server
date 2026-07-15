@@ -4,29 +4,34 @@ package logic;
 
 option go_package = "demo_server/gen/logic;logicpb";
 
-/************ service ************/
+// LogicService 逻辑服服务
 service LogicService {
-  // 登录  
+  // Login 邮箱密码登录
   rpc Login(LoginReq) returns (AuthResp);
 
-  // 注册
+  // Register 用户注册
   rpc Register(RegisterReq) returns (AuthResp);
 
-  // 发送验证码
+  // SendVerifyCode 发送邮箱验证码
   rpc SendVerifyCode(SendVerifyCodeReq) returns(SendVerifyCodeResp);
+
+  // VerifyToken 校验登录令牌
+  rpc VerifyToken(VerifyTokenReq) returns(AuthResp);
 }
 
-/************ message  ************/
+// LoginReq 登录请求
 message LoginReq {
   string email = 1; // 邮箱
   string password = 2; // 密码
 }
 
+// RegisterReq 注册请求
 message RegisterReq {
-  string email = 1;
+  string email = 1; // 邮箱
   string verification_code = 2; // 验证码
 }
 
+// AuthResp 认证响应
 message AuthResp {
   bool status = 1; // 状态
   string content = 2; // 返回信息
@@ -34,12 +39,20 @@ message AuthResp {
   string refresh_token = 4; // 长期token
 }
 
+// SendVerifyCodeReq 发送验证码请求
 message SendVerifyCodeReq {
-  string email = 1;
+  string email = 1; // 邮箱
 }
 
+// SendVerifyCodeResp 发送验证码响应
 message SendVerifyCodeResp {
-  bool status = 1;
-  string content = 2;
-  string verification_code = 3;
+  bool status = 1; // 状态
+  string content = 2; // 返回信息
+  string verification_code = 3; // 验证码
+}
+
+// VerifyTokenReq 令牌校验请求
+message VerifyTokenReq {
+  string access_token = 1; // 短token
+  string refresh_token = 2; // 长期token
 }
