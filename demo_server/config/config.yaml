@@ -38,6 +38,18 @@ logic_server_01:
     max_open_conns: 100
     conn_max_idle_time: 300
 
+#match_server
+match_server_01:
+  listen_addr: ":8090"
+  token_secret: "room-token-secret"
+  token_expire: "1m"
+  max_players_per_room: 10
+  room_servers:
+    - server_id: "room-01"
+      server_addr: "127.0.0.1:9001"
+      max_rooms: 1000
+      max_players_per_room: 10
+
 #room_server
 room_server_01:
   server_id: "room-01"

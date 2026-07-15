@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package match;
+
+option go_package = "demo_server/gen/match;matchpb";
+
+// MatchService 匹配服务
+service MatchService {
+  // AllocateRoom 分配房间并签发入房令牌
+  rpc AllocateRoom(AllocateRoomReq) returns (AllocateRoomResp);
+}
+
+// AllocateRoomReq 分配房间请求
+message AllocateRoomReq {
+  uint64 player_id = 1; // 玩家ID
+  string mode = 2; // 匹配模式
+}
+
+// AllocateRoomResp 分配房间响应
+message AllocateRoomResp {
+  bool status = 1; // 状态
+  string content = 2; // 返回信息
+  string room_id = 3; // 房间ID
+  string server_id = 4; // roomserver ID
+  string server_addr = 5; // roomserver连接地址
+  string match_id = 6; // 匹配ID
+  string room_token = 7; // 入房令牌
+  int64 expire_at = 8; // 过期时间戳，毫秒
+}

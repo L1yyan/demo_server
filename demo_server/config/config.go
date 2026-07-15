@@ -14,6 +14,8 @@ import (
 const (
 	defaultConfigPath      = "config/config.yaml" // 默认配置文件路径
 	defaultLogicListenAddr = ":8080"              // logicserver 默认监听地址
+	defaultMatchListenAddr = ":8090"              // matchserver 默认监听地址
+	defaultRoomTokenExpire = time.Minute          // room token 默认有效期
 	defaultProjectMarkFile = "go.mod"             // 项目根目录标记文件
 )
 
@@ -23,6 +25,7 @@ type Config struct {
 	Email         EmailConfig       `yaml:"email"`           // 邮件配置
 	JWT           JwtConfig         `yaml:"jwt"`             // JWT配置
 	LogicServer01 LogicServerConfig `yaml:"logic_server_01"` // logicserver配置
+	MatchServer01 MatchServerConfig `yaml:"match_server_01"` // matchserver配置
 }
 
 // LogConfig 日志配置
@@ -72,6 +75,23 @@ type LogicServerConfig struct {
 	MongoDB    MongoDBConfig `yaml:"mongodb"`     // MongoDB配置
 }
 
+// MatchServerConfig matchserver运行配置
+type MatchServerConfig struct {
+	ListenAddr        string                 `yaml:"listen_addr"`          // gRPC监听地址
+	TokenSecret       string                 `yaml:"token_secret"`         // room token签名密钥
+	TokenExpire       time.Duration          `yaml:"token_expire"`         // room token有效期
+	MaxPlayersPerRoom int                    `yaml:"max_players_per_room"` // 默认单房间人数上限
+	RoomServers       []RoomServerNodeConfig `yaml:"room_servers"`         // 可分配roomserver列表
+}
+
+// RoomServerNodeConfig matchserver可分配的roomserver配置
+type RoomServerNodeConfig struct {
+	ServerID          string `yaml:"server_id"`            // roomserver ID
+	ServerAddr        string `yaml:"server_addr"`          // 客户端连接地址
+	MaxRooms          int    `yaml:"max_rooms"`            // 最大房间数
+	MaxPlayersPerRoom int    `yaml:"max_players_per_room"` // 单房间人数上限
+}
+
 // Load 读取项目配置文件
 func Load(path string) (*Config, error) {
 	if strings.TrimSpace(path) == "" {
@@ -108,6 +128,20 @@ func FindConfigPath() (string, error) {
 func (c *Config) normalize() {
 	if strings.TrimSpace(c.LogicServer01.ListenAddr) == "" {
 		c.LogicServer01.ListenAddr = defaultLogicListenAddr
+	}
+	if strings.TrimSpace(c.MatchServer01.ListenAddr) == "" {
+		c.MatchServer01.ListenAddr = defaultMatchListenAddr
+	}
+	if c.MatchServer01.TokenExpire <= 0 {
+		c.MatchServer01.TokenExpire = defaultRoomTokenExpire
+	}
+	if c.MatchServer01.MaxPlayersPerRoom <= 0 {
+		c.MatchServer01.MaxPlayersPerRoom = 10
+	}
+	for index := range c.MatchServer01.RoomServers {
+		if c.MatchServer01.RoomServers[index].MaxPlayersPerRoom <= 0 {
+			c.MatchServer01.RoomServers[index].MaxPlayersPerRoom = c.MatchServer01.MaxPlayersPerRoom
+		}
 	}
 }
 
