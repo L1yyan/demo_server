@@ -36,6 +36,8 @@ type AuthLogic struct {
 
 // LoginResult 登录结果
 type LoginResult struct {
+	UserID       uint64 // 用户ID
+	Email        string // 邮箱
 	AccessToken  string // 短token
 	RefreshToken string // 长token
 }
@@ -93,7 +95,7 @@ func (l *AuthLogic) Login(ctx context.Context, email string, password string) (*
 	if err := l.tokens.SaveLoginTokens(ctx, user.UserID, user.Email, accessToken, refreshToken, l.accessTTL, l.refreshTTL); err != nil {
 		return nil, err
 	}
-	return &LoginResult{AccessToken: accessToken, RefreshToken: refreshToken}, nil
+	return &LoginResult{UserID: user.UserID, Email: user.Email, AccessToken: accessToken, RefreshToken: refreshToken}, nil
 }
 
 // VerifyToken 校验登录 token，必要时刷新短 token
@@ -109,7 +111,7 @@ func (l *AuthLogic) VerifyToken(ctx context.Context, accessToken string, refresh
 
 	claims, expired, err := l.jwt.VerifyAccessToken(accessToken)
 	if err == nil {
-		return l.verifyActiveAccessToken(ctx, accessToken, refreshToken, claims.UserID)
+		return l.verifyActiveAccessToken(ctx, accessToken, refreshToken, claims.UserID, claims.Email)
 	}
 	if !expired {
 		return nil, ErrUnauthorized
@@ -121,7 +123,7 @@ func (l *AuthLogic) VerifyToken(ctx context.Context, accessToken string, refresh
 }
 
 // verifyActiveAccessToken 校验未过期短 token 是否仍在服务端有效
-func (l *AuthLogic) verifyActiveAccessToken(ctx context.Context, accessToken string, refreshToken string, userID uint64) (*LoginResult, error) {
+func (l *AuthLogic) verifyActiveAccessToken(ctx context.Context, accessToken string, refreshToken string, userID uint64, email string) (*LoginResult, error) {
 	session, err := l.tokens.GetAccessSession(ctx, accessToken)
 	if err != nil {
 		return nil, ErrUnauthorized
@@ -129,10 +131,13 @@ func (l *AuthLogic) verifyActiveAccessToken(ctx context.Context, accessToken str
 	if session.UserID != userID {
 		return nil, ErrUnauthorized
 	}
+	if session.Email != "" && email != "" && session.Email != email {
+		return nil, ErrUnauthorized
+	}
 	if refreshToken != "" && session.RefreshHash != repo.TokenHash(refreshToken) {
 		return nil, ErrUnauthorized
 	}
-	return &LoginResult{AccessToken: accessToken, RefreshToken: refreshToken}, nil
+	return &LoginResult{UserID: userID, Email: email, AccessToken: accessToken, RefreshToken: refreshToken}, nil
 }
 
 // refreshAccessToken 使用长 token 刷新短 token
@@ -151,7 +156,7 @@ func (l *AuthLogic) refreshAccessToken(ctx context.Context, refreshToken string)
 	if err := l.tokens.SaveAccessToken(ctx, claims.UserID, claims.Email, newAccessToken, refreshToken, l.accessTTL); err != nil {
 		return nil, err
 	}
-	return &LoginResult{AccessToken: newAccessToken, RefreshToken: refreshToken}, nil
+	return &LoginResult{UserID: claims.UserID, Email: claims.Email, AccessToken: newAccessToken, RefreshToken: refreshToken}, nil
 }
 
 // isValidEmail 校验邮箱格式

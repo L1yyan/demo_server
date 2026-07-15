@@ -9,6 +9,7 @@ import (
 
 	conf "demo_server/config"
 	logicpb "demo_server/gen/logic"
+	matchpb "demo_server/gen/match"
 	"demo_server/pkg/glog"
 	jwttool "demo_server/pkg/jwt"
 	"demo_server/pkg/mongodb"
@@ -18,6 +19,7 @@ import (
 	"demo_server/src/logicserver/service"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // main logicserver 启动入口
@@ -59,14 +61,24 @@ func main() {
 		glog.Fatal(ctx, "create auth logic failed", glog.Err(err))
 	}
 
+	matchConn, err := grpc.NewClient(cfg.LogicServer01.MatchServerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		glog.Fatal(ctx, "connect matchserver failed", glog.String("addr", cfg.LogicServer01.MatchServerAddr), glog.Err(err))
+	}
+	defer matchConn.Close()
+	matchLogic, err := logic.NewMatchLogic(authLogic, matchpb.NewMatchServiceClient(matchConn))
+	if err != nil {
+		glog.Fatal(ctx, "create match logic failed", glog.Err(err))
+	}
+
 	grpcServer := grpc.NewServer()
-	logicpb.RegisterLogicServiceServer(grpcServer, service.NewLogicService(authLogic))
+	logicpb.RegisterLogicServiceServer(grpcServer, service.NewLogicService(authLogic, matchLogic))
 
 	listener, err := net.Listen("tcp", cfg.LogicServer01.ListenAddr)
 	if err != nil {
 		glog.Fatal(ctx, "listen logicserver failed", glog.String("addr", cfg.LogicServer01.ListenAddr), glog.Err(err))
 	}
-	glog.Info(ctx, "logicserver started", glog.String("addr", cfg.LogicServer01.ListenAddr))
+	glog.Info(ctx, "logicserver started", glog.String("addr", cfg.LogicServer01.ListenAddr), glog.String("match_addr", cfg.LogicServer01.MatchServerAddr))
 
 	go func() {
 		<-ctx.Done()

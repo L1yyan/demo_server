@@ -14,6 +14,7 @@ import (
 const (
 	defaultConfigPath      = "config/config.yaml" // 默认配置文件路径
 	defaultLogicListenAddr = ":8080"              // logicserver 默认监听地址
+	defaultMatchServerAddr = "127.0.0.1:8090"     // 默认matchserver地址
 	defaultMatchListenAddr = ":8090"              // matchserver 默认监听地址
 	defaultRoomTokenExpire = time.Minute          // room token 默认有效期
 	defaultProjectMarkFile = "go.mod"             // 项目根目录标记文件
@@ -70,9 +71,10 @@ type JwtConfig struct {
 
 // LogicServerConfig logicserver运行配置
 type LogicServerConfig struct {
-	ListenAddr string        `yaml:"listen_addr"` // gRPC监听地址
-	Redis      RedisConfig   `yaml:"redis"`       // Redis配置
-	MongoDB    MongoDBConfig `yaml:"mongodb"`     // MongoDB配置
+	ListenAddr      string        `yaml:"listen_addr"`       // gRPC监听地址
+	MatchServerAddr string        `yaml:"match_server_addr"` // matchserver地址
+	Redis           RedisConfig   `yaml:"redis"`             // Redis配置
+	MongoDB         MongoDBConfig `yaml:"mongodb"`           // MongoDB配置
 }
 
 // MatchServerConfig matchserver运行配置
@@ -128,6 +130,9 @@ func FindConfigPath() (string, error) {
 func (c *Config) normalize() {
 	if strings.TrimSpace(c.LogicServer01.ListenAddr) == "" {
 		c.LogicServer01.ListenAddr = defaultLogicListenAddr
+	}
+	if strings.TrimSpace(c.LogicServer01.MatchServerAddr) == "" {
+		c.LogicServer01.MatchServerAddr = defaultMatchServerAddr
 	}
 	if strings.TrimSpace(c.MatchServer01.ListenAddr) == "" {
 		c.MatchServer01.ListenAddr = defaultMatchListenAddr

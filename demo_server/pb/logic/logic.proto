@@ -17,6 +17,9 @@ service LogicService {
 
   // VerifyToken 校验登录令牌
   rpc VerifyToken(VerifyTokenReq) returns(AuthResp);
+
+  // MatchRoom 请求匹配房间
+  rpc MatchRoom(MatchRoomReq) returns(MatchRoomResp);
 }
 
 // LoginReq 登录请求
@@ -55,4 +58,25 @@ message SendVerifyCodeResp {
 message VerifyTokenReq {
   string access_token = 1; // 短token
   string refresh_token = 2; // 长期token
+}
+
+// MatchRoomReq 匹配请求
+message MatchRoomReq {
+  string access_token = 1; // 短token
+  string refresh_token = 2; // 长期token
+  string mode = 3; // 匹配模式
+}
+
+// MatchRoomResp 匹配响应
+message MatchRoomResp {
+  bool status = 1; // 状态
+  string content = 2; // 返回信息
+  string access_token = 3; // 当前可用短token
+  string refresh_token = 4; // 长期token
+  string room_id = 5; // 房间ID
+  string server_id = 6; // roomserver ID
+  string server_addr = 7; // roomserver连接地址
+  string match_id = 8; // 匹配ID
+  string room_token = 9; // 入房令牌
+  int64 expire_at = 10; // 过期时间戳，毫秒
 }
