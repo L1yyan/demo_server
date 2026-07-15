@@ -21,7 +21,7 @@ jwt:
     - ""
 
 #logic_server
-logic_server:
+logic_server_01:
   redis:
     addr: "127.0.0.1:6379"
     password: "Liyan927927."
@@ -36,3 +36,16 @@ logic_server:
     max_idle_conns: 10
     max_open_conns: 100
     conn_max_idle_time: 300
+
+#room_server
+room_server_01:
+  server_id: "room-01"
+  listen_addr: ":9001"
+  token_secret: "room-token-secret"
+  max_rooms: 1000
+  max_players_per_room: 10
+  tick_rate: 20
+  snapshot_rate: 10
+  read_timeout: "10s"
+  write_queue_size: 128
+  max_payload_size: 65536

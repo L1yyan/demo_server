@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package room;
+
+option go_package = "demo_server/gen/room;roompb";
+
+/************ service ************/
+// RoomService 房间服务
+service RoomService {
+  // JoinRoom 加入房间
+  rpc JoinRoom(JoinRoomReq) returns (JoinRoomResp);
+}
+
+/************ message ************/
+// JoinRoomReq 加入房间请求
+message JoinRoomReq {
+  string token = 1; // 入房令牌
+}
+
+// JoinRoomResp 加入房间响应
+message JoinRoomResp {
+  bool status = 1; // 状态
+  string content = 2; // 返回信息
+  string room_id = 3; // 房间ID
+  int64 tick = 4; // 当前帧号
+}
+
+// PlayerInput 玩家输入
+message PlayerInput {
+  int64 client_tick = 1; // 客户端帧号
+  double move_x = 2; // 左右移动输入
+  double move_z = 3; // 前后移动输入
+  double yaw = 4; // 水平视角
+  double pitch = 5; // 垂直视角
+  bool fire = 6; // 是否开火
+}
+
+// PlayerState 玩家状态
+message PlayerState {
+  uint64 player_id = 1; // 玩家ID
+  double x = 2; // X坐标
+  double y = 3; // Y坐标
+  double z = 4; // Z坐标
+  double yaw = 5; // 水平视角
+  double pitch = 6; // 垂直视角
+  int32 hp = 7; // 生命值
+}
+
+// Snapshot 状态快照
+message Snapshot {
+  int64 server_tick = 1; // 服务端帧号
+  repeated PlayerState players = 2; // 可见玩家
+}
+
+// ErrorResp 错误响应
+message ErrorResp {
+  string code = 1; // 错误码
+  string content = 2; // 错误信息
+}
