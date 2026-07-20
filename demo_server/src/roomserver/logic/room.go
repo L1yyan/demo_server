@@ -23,6 +23,11 @@ type roomEvent struct {
 	input    protocol.PlayerInput
 }
 
+type playerInputState struct {
+	input   authoritativeInput // 最近一次有效输入
+	hasData bool               // 是否已收到过有效输入
+}
+
 // Room 单局房间
 type Room struct {
 	id             string
@@ -34,6 +39,7 @@ type Room struct {
 	events         chan roomEvent
 	stop           chan struct{}
 	players        map[uint64]*Player
+	inputs         map[uint64]playerInputState
 	tick           int64
 	lastSnapshotAt int64
 }
@@ -62,6 +68,7 @@ func NewRoom(id string, maxPlayers int, tickRate int, snapshotRate int, aoi AOIF
 		events:       make(chan roomEvent, 256),
 		stop:         make(chan struct{}),
 		players:      make(map[uint64]*Player),
+		inputs:       make(map[uint64]playerInputState),
 	}
 }
 
@@ -118,6 +125,9 @@ func (r *Room) pushEvent(event roomEvent) bool {
 // loop 执行房间固定帧循环
 func (r *Room) loop(ctx context.Context) {
 	defer func() {
+		if err := r.physics.Close(); err != nil {
+			glog.Warn(ctx, "close physics world failed", glog.String("room_id", r.id), glog.Err(err))
+		}
 		if recovered := recover(); recovered != nil {
 			glog.Error(ctx, "room loop panic", glog.String("room_id", r.id), glog.Any("panic", recovered))
 		}
@@ -175,6 +185,12 @@ func (r *Room) handleJoin(ctx context.Context, player *Player) {
 	player.RoomID = r.id
 	player.HP = 100
 	player.Alive = true
+	if err := r.physics.AddPlayer(player.ID, Vector3{X: player.X, Y: player.Y, Z: player.Z}); err != nil {
+		message, _ := protocol.NewJSONMessage(protocol.MsgJoinRoomAck, protocol.JoinRoomAck{OK: false, RoomID: r.id, Content: "physics add player failed", Tick: r.tick})
+		player.Session.Send(message)
+		glog.Warn(ctx, "add physics player failed", glog.String("room_id", r.id), glog.Uint64("player_id", player.ID), glog.Err(err))
+		return
+	}
 	r.players[player.ID] = player
 
 	message, _ := protocol.NewJSONMessage(protocol.MsgJoinRoomAck, protocol.JoinRoomAck{OK: true, RoomID: r.id, Content: "ok", Tick: r.tick})
@@ -188,6 +204,10 @@ func (r *Room) handleLeave(ctx context.Context, playerID uint64) {
 		return
 	}
 	delete(r.players, playerID)
+	delete(r.inputs, playerID)
+	if err := r.physics.RemovePlayer(playerID); err != nil {
+		glog.Warn(ctx, "remove physics player failed", glog.String("room_id", r.id), glog.Uint64("player_id", playerID), glog.Err(err))
+	}
 	glog.Info(ctx, "player left room", glog.String("room_id", r.id), glog.Uint64("player_id", playerID))
 }
 
@@ -198,19 +218,18 @@ func (r *Room) handleInput(playerID uint64, input protocol.PlayerInput) {
 		return
 	}
 
-	// 第一版只做简化移动，后续替换为服务端权威移动和碰撞
-	player.X += input.MoveX * 0.2
-	player.Z += input.MoveZ * 0.2
-	player.Yaw = input.Yaw
-	player.Pitch = input.Pitch
-	if input.Fire {
-		_, _ = r.physics.Raycast(RaycastRequest{Origin: Vector3{X: player.X, Y: player.Y, Z: player.Z}, Direction: Vector3{Z: 1}, MaxDistance: 100})
+	// 客户端只提交输入意图，最终移动由服务端固定 tick 计算
+	sanitized, ok := sanitizePlayerInput(input)
+	if !ok {
+		return
 	}
+	r.inputs[playerID] = playerInputState{input: sanitized, hasData: true}
 }
 
 // update 更新房间状态并按频率广播快照
 func (r *Room) update(ctx context.Context) {
 	r.tick++
+	r.updatePlayers(ctx)
 	if r.snapshotRate <= 0 {
 		return
 	}
@@ -223,6 +242,36 @@ func (r *Room) update(ctx context.Context) {
 	}
 	r.lastSnapshotAt = r.tick
 	r.broadcastSnapshots(ctx)
+}
+
+// updatePlayers 按服务端固定 tick 推进玩家权威状态
+func (r *Room) updatePlayers(ctx context.Context) {
+	for playerID, player := range r.players {
+		if player == nil || !player.Alive {
+			continue
+		}
+		inputState, ok := r.inputs[playerID]
+		if !ok || !inputState.hasData {
+			continue
+		}
+
+		applyViewRotation(player, inputState.input)
+		moveReq, ok := buildMovePlayerRequest(playerID, inputState.input, r.tickRate)
+		if ok && moveReq.Distance > 0 {
+			// 由物理世界计算最终位置，避免逻辑层绕过碰撞规则
+			result, err := r.physics.MovePlayer(moveReq)
+			if err != nil {
+				glog.Warn(ctx, "move physics player failed", glog.String("room_id", r.id), glog.Uint64("player_id", playerID), glog.Err(err))
+			} else {
+				player.X = result.Position.X
+				player.Y = result.Position.Y
+				player.Z = result.Position.Z
+			}
+		}
+		if inputState.input.Fire {
+			_, _ = r.physics.Raycast(RaycastRequest{Origin: Vector3{X: player.X, Y: player.Y, Z: player.Z}, Direction: viewDirection(player.Yaw, player.Pitch), MaxDistance: 100})
+		}
+	}
 }
 
 // broadcastSnapshots 按 AOI 向玩家广播状态快照

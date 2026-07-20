@@ -1,4 +1,5 @@
 # 二进制文件
+bin/
 
 # Go 相关
 go.sum
@@ -17,3 +18,8 @@ vendor/
 # 生成的文件
 *.pb.go
 *_grpc.pb.go
+
+# 第三方源码与本地构建产物
+third_party/PhysX/
+third_party/physx-sdk/
+third_party/tools/

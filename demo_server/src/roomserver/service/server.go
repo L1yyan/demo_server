@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"demo_server/pkg/glog"
 	roomconfig "demo_server/src/roomserver/config"
 	"demo_server/src/roomserver/logic"
+	"demo_server/src/roomserver/physx"
 	"demo_server/src/roomserver/protocol"
 
 	"github.com/xtaci/kcp-go/v5"
@@ -32,7 +34,11 @@ func NewServer(cfg roomconfig.Config) *Server {
 
 // Start 启动 roomserver
 func (s *Server) Start(ctx context.Context) error {
-	manager := logic.NewRoomManager(ctx, s.cfg.MaxRooms, s.cfg.MaxPlayersPerRoom, s.cfg.TickRate, s.cfg.SnapshotRate, logic.NewSimpleAOIFilter(), logic.NewSimplePhysicsWorld())
+	physicsFactory, err := s.newPhysicsWorldFactory()
+	if err != nil {
+		return err
+	}
+	manager := logic.NewRoomManager(ctx, s.cfg.MaxRooms, s.cfg.MaxPlayersPerRoom, s.cfg.TickRate, s.cfg.SnapshotRate, logic.NewSimpleAOIFilter(), physicsFactory)
 	listener, err := kcp.ListenWithOptions(s.cfg.ListenAddr, nil, 10, 3)
 	if err != nil {
 		return fmt.Errorf("listen kcp: %w", err)
@@ -42,7 +48,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.manager = manager
 	s.listener = listener
-	glog.Info(ctx, "roomserver started", glog.String("addr", s.cfg.ListenAddr), glog.String("server_id", s.cfg.ServerID))
+	glog.Info(ctx, "roomserver started", glog.String("addr", s.cfg.ListenAddr), glog.String("server_id", s.cfg.ServerID), glog.String("physics_backend", s.cfg.PhysicsBackend))
 
 	go s.acceptLoop(ctx)
 	return nil
@@ -89,6 +95,22 @@ func (s *Server) HandleSessionClosed(ctx context.Context, session *Session) {
 		s.manager.LeaveRoom(session.PlayerID())
 	}
 	glog.Info(ctx, "session closed", glog.String("session_id", session.ID()), glog.Uint64("player_id", session.PlayerID()))
+}
+
+// newPhysicsWorldFactory 根据配置创建物理世界工厂
+func (s *Server) newPhysicsWorldFactory() (logic.PhysicsWorldFactory, error) {
+	switch strings.ToLower(strings.TrimSpace(s.cfg.PhysicsBackend)) {
+	case "", roomconfig.PhysicsBackendPhysX:
+		return physx.NewFactory(physx.Config{
+			PlayerCapsuleRadius: s.cfg.PlayerCapsuleRadius,
+			PlayerCapsuleHeight: s.cfg.PlayerCapsuleHeight,
+			CreateGroundPlane:   s.cfg.PhysicsGroundPlane,
+		}), nil
+	case roomconfig.PhysicsBackendSimple:
+		return logic.NewSimplePhysicsWorldFactory(), nil
+	default:
+		return nil, fmt.Errorf("unknown physics backend: %s", s.cfg.PhysicsBackend)
+	}
 }
 
 // acceptLoop 接收客户端 KCP 连接

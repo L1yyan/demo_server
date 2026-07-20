@@ -47,7 +47,7 @@ match_server_01:
   max_players_per_room: 10
   room_servers:
     - server_id: "room-01"
-      server_addr: "127.0.0.1:9001"
+      server_addr: "172.29.168.6:9001"
       max_rooms: 1000
       max_players_per_room: 10
 
@@ -63,3 +63,7 @@ room_server_01:
   read_timeout: "10s"
   write_queue_size: 128
   max_payload_size: 65536
+  physics_backend: "physx"
+  player_capsule_radius: 0.35
+  player_capsule_height: 1.8
+  physics_ground_plane: true

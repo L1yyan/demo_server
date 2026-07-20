@@ -593,39 +593,51 @@ type AOIFilter interface {
 
 ## 15. 物理接口当前如何工作
 
-物理代码在 `src/roomserver/logic/physics.go`。
+物理接口代码在 `src/roomserver/logic/physics.go`，PhysX cgo 后端在 `src/roomserver/physx`。
 
 接口：
 
 ```go
 type PhysicsWorld interface {
+    AddPlayer(playerID uint64, position Vector3) error
+    RemovePlayer(playerID uint64) error
+    MovePlayer(MovePlayerRequest) (MovePlayerResult, error)
     Raycast(RaycastRequest) (RaycastHit, error)
     BatchRaycast([]RaycastRequest) ([]RaycastHit, error)
+    Close() error
 }
 ```
 
-当前实现：
-
-```go
-SimplePhysicsWorld
-```
-
-它只是占位，`Raycast` 当前返回未命中。
-
-后续接 PhysX 时，不建议让 room 逻辑直接调用 cgo。更好的方式是新增一个实现：
+当前默认后端是 PhysX：
 
 ```text
-PhysXPhysicsWorld implements PhysicsWorld
+PhysicsBackend = "physx"
 ```
 
-这样 `Room` 仍然只依赖 `PhysicsWorld` 接口。
+默认构建 roomserver 时需要启用 `physx` build tag，并准备本地 PhysX SDK：
 
-后续要特别注意：
+```bash
+scripts/setup_physx.sh
+scripts/build_all.sh
+```
 
+`setup_physx.sh` 会把第三方源码和构建产物放到 `third_party` 下：
+
+```text
+third_party/PhysX
+third_party/physx-sdk
+third_party/tools
+```
+
+`Room` 仍然只依赖 `PhysicsWorld` 接口，不直接调用 cgo。每个房间通过 `PhysicsWorldFactory` 创建独立 PhysX scene，避免不同房间玩家发生碰撞串扰。
+
+需要特别注意：
+
+- 默认构建会依赖 PhysX SDK，缺少 SDK 时应先运行 `scripts/setup_physx.sh`。
 - 高频 raycast 应优先批量调用 `BatchRaycast`。
-- 不要每 tick 每玩家频繁单次 cgo 调用。
-- PhysX 对象生命周期要集中管理。
-- Go 状态和 PhysX 状态要有清晰同步点。
+- 玩家移动当前按房间 tick 调用 `MovePlayer`，后续人数增加时可扩展批量移动。
+- PhysX 对象生命周期由房间集中管理，玩家加入创建 actor，离房和停房释放 actor/world。
+- Go 状态和 PhysX 状态的同步点在房间 tick 中。
 
 ## 16. 玩家断线和离房
 

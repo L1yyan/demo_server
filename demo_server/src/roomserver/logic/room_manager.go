@@ -26,16 +26,19 @@ type RoomManager struct {
 	tickRate          int
 	snapshotRate      int
 	aoi               AOIFilter
-	physics           PhysicsWorld
+	physicsFactory    PhysicsWorldFactory
 }
 
 // NewRoomManager 创建房间管理器
-func NewRoomManager(ctx context.Context, maxRooms int, maxPlayersPerRoom int, tickRate int, snapshotRate int, aoi AOIFilter, physics PhysicsWorld) *RoomManager {
+func NewRoomManager(ctx context.Context, maxRooms int, maxPlayersPerRoom int, tickRate int, snapshotRate int, aoi AOIFilter, physicsFactory PhysicsWorldFactory) *RoomManager {
 	if maxRooms <= 0 {
 		maxRooms = 1000
 	}
 	if maxPlayersPerRoom <= 0 {
 		maxPlayersPerRoom = 10
+	}
+	if physicsFactory == nil {
+		physicsFactory = NewSimplePhysicsWorldFactory()
 	}
 	return &RoomManager{
 		ctx:               ctx,
@@ -46,7 +49,7 @@ func NewRoomManager(ctx context.Context, maxRooms int, maxPlayersPerRoom int, ti
 		tickRate:          tickRate,
 		snapshotRate:      snapshotRate,
 		aoi:               aoi,
-		physics:           physics,
+		physicsFactory:    physicsFactory,
 	}
 }
 
@@ -131,7 +134,12 @@ func (m *RoomManager) getOrCreateRoom(roomID string) (*Room, error) {
 		return nil, ErrRoomLimitReached
 	}
 
-	room = NewRoom(roomID, m.maxPlayersPerRoom, m.tickRate, m.snapshotRate, m.aoi, m.physics)
+	// 每个房间创建独立物理世界，避免不同房间玩家发生碰撞串扰
+	physicsWorld, err := m.physicsFactory.NewWorld(roomID)
+	if err != nil {
+		return nil, err
+	}
+	room = NewRoom(roomID, m.maxPlayersPerRoom, m.tickRate, m.snapshotRate, m.aoi, physicsWorld)
 	room.Start(m.ctx)
 	m.rooms[roomID] = room
 	return room, nil
