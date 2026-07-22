@@ -42,7 +42,7 @@ room_server_01:
   listen_addr: ":9001"
   token_secret: "room-token-secret"
   max_rooms: 1000
-  max_players_per_room: 10
+  max_players_per_room: 2
   tick_rate: 20
   snapshot_rate: 10
   read_timeout: "10s"
@@ -799,7 +799,7 @@ Server.Start(ctx)
 
 - `ctx`：房间管理器和房间 loop 共用的生命周期控制。
 - `maxRooms`：当前 roomserver 进程最多允许创建多少房间，防止无限创建房间。
-- `maxPlayersPerRoom`：单个房间最大玩家数，当前玩法目标是 10 人乱斗。
+- `maxPlayersPerRoom`：单个房间最大玩家数，当前玩法目标是 2 人对局。
 - `tickRate`：房间每秒逻辑更新次数，例如 20 表示每 50ms 更新一次。
 - `snapshotRate`：每秒发送快照次数，例如 10 表示每 100ms 发一次快照。
 - `aoi`：AOI 过滤器。当前传 `logic.NewSimpleAOIFilter()`，用于按距离和视角过滤可见玩家。
@@ -1043,7 +1043,7 @@ getOrCreateRoom(roomID)
 `NewRoom(roomID, maxPlayersPerRoom, tickRate, snapshotRate, aoi, physics)`：
 
 - `roomID`：房间唯一 ID。
-- `maxPlayersPerRoom`：该房间最大人数，当前默认 10。
+- `maxPlayersPerRoom`：该房间最大人数，当前默认 2。
 - `tickRate`：房间每秒逻辑更新次数。
 - `snapshotRate`：房间每秒快照发送次数。
 - `aoi`：AOI 过滤器，用于决定每个玩家能看到谁。

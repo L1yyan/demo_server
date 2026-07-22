@@ -170,7 +170,7 @@ func normalizeConfig(cfg conf.MatchServerConfig) conf.MatchServerConfig {
 		cfg.TokenExpire = time.Minute
 	}
 	if cfg.MaxPlayersPerRoom <= 0 {
-		cfg.MaxPlayersPerRoom = 10
+		cfg.MaxPlayersPerRoom = 2
 	}
 	for index := range cfg.RoomServers {
 		if cfg.RoomServers[index].MaxRooms <= 0 {

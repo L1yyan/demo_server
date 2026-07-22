@@ -34,7 +34,7 @@ func DefaultConfig() Config {
 		ListenAddr:          ":9001",
 		TokenSecret:         "room-token-secret",
 		MaxRooms:            1000,
-		MaxPlayersPerRoom:   10,
+		MaxPlayersPerRoom:   2,
 		TickRate:            20,
 		SnapshotRate:        10,
 		ReadTimeout:         10 * time.Second,

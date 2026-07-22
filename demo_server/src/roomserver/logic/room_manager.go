@@ -35,7 +35,7 @@ func NewRoomManager(ctx context.Context, maxRooms int, maxPlayersPerRoom int, ti
 		maxRooms = 1000
 	}
 	if maxPlayersPerRoom <= 0 {
-		maxPlayersPerRoom = 10
+		maxPlayersPerRoom = 2
 	}
 	if physicsFactory == nil {
 		physicsFactory = NewSimplePhysicsWorldFactory()

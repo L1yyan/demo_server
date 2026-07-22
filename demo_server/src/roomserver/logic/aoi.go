@@ -43,7 +43,7 @@ func (f *SimpleAOIFilter) FilterVisible(self *Player, candidates []*Player) []*P
 			continue
 		}
 
-		// 先按距离粗筛，10人房间直接遍历即可
+		// 先按距离粗筛，2人房间直接遍历即可
 		dx := candidate.X - self.X
 		dz := candidate.Z - self.Z
 		distance := math.Sqrt(dx*dx + dz*dz)

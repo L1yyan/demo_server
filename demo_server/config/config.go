@@ -141,7 +141,7 @@ func (c *Config) normalize() {
 		c.MatchServer01.TokenExpire = defaultRoomTokenExpire
 	}
 	if c.MatchServer01.MaxPlayersPerRoom <= 0 {
-		c.MatchServer01.MaxPlayersPerRoom = 10
+		c.MatchServer01.MaxPlayersPerRoom = 2
 	}
 	for index := range c.MatchServer01.RoomServers {
 		if c.MatchServer01.RoomServers[index].MaxPlayersPerRoom <= 0 {

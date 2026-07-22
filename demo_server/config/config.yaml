@@ -44,12 +44,12 @@ match_server_01:
   listen_addr: ":8090"
   token_secret: "room-token-secret"
   token_expire: "1m"
-  max_players_per_room: 10
+  max_players_per_room: 2
   room_servers:
     - server_id: "room-01"
       server_addr: "172.29.168.6:9001"
       max_rooms: 1000
-      max_players_per_room: 10
+      max_players_per_room: 2
 
 #room_server
 room_server_01:
@@ -57,7 +57,7 @@ room_server_01:
   listen_addr: ":9001"
   token_secret: "room-token-secret"
   max_rooms: 1000
-  max_players_per_room: 10
+  max_players_per_room: 2
   tick_rate: 20
   snapshot_rate: 10
   read_timeout: "10s"
