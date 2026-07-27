@@ -7,7 +7,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <mutex>
 #include <unordered_map>
+#include <vector>
 
 using namespace physx;
 
@@ -17,18 +19,27 @@ struct player_actor {
     double height;
 };
 
-struct px_world {
+struct px_runtime {
     PxDefaultAllocator allocator;
     PxDefaultErrorCallback error_callback;
     PxFoundation* foundation;
     PxPhysics* physics;
+    int ref_count;
+};
+
+struct px_world {
+    px_runtime* runtime;
     PxDefaultCpuDispatcher* dispatcher;
     PxScene* scene;
     PxMaterial* material;
     std::unordered_map<uint64_t, player_actor> players;
+    std::vector<PxRigidStatic*> static_actors;
 };
 
 namespace {
+
+std::mutex g_runtime_mutex;
+px_runtime* g_runtime = nullptr;
 
 void set_error(char* err, int err_len, const char* message) {
     if (err == nullptr || err_len <= 0) {
@@ -42,12 +53,28 @@ PxVec3 to_px_vec3(px_vec3 value) {
     return PxVec3(static_cast<PxReal>(value.x), static_cast<PxReal>(value.y), static_cast<PxReal>(value.z));
 }
 
+PxQuat to_px_quat(px_quat value) {
+    return PxQuat(static_cast<PxReal>(value.x), static_cast<PxReal>(value.y), static_cast<PxReal>(value.z), static_cast<PxReal>(value.w));
+}
+
 px_vec3 from_px_vec3(const PxVec3& value) {
     return px_vec3{static_cast<double>(value.x), static_cast<double>(value.y), static_cast<double>(value.z)};
 }
 
 bool valid_vec3(px_vec3 value) {
     return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+}
+
+bool valid_quat(px_quat value) {
+    if (!std::isfinite(value.x) || !std::isfinite(value.y) || !std::isfinite(value.z) || !std::isfinite(value.w)) {
+        return false;
+    }
+    double length_squared = value.x * value.x + value.y * value.y + value.z * value.z + value.w * value.w;
+    return length_squared > 0.000001;
+}
+
+bool valid_box_size(px_vec3 value) {
+    return valid_vec3(value) && value.x > 0 && value.y > 0 && value.z > 0;
 }
 
 class IgnoreActorFilter : public PxQueryFilterCallback {
@@ -83,63 +110,107 @@ px_vec3 actor_player_position(PxRigidDynamic* actor, double height) {
     return px_vec3{static_cast<double>(pose.p.x), static_cast<double>(pose.p.y) - height * 0.5, static_cast<double>(pose.p.z)};
 }
 
+px_runtime* acquire_runtime(char* err, int err_len) {
+    std::lock_guard<std::mutex> lock(g_runtime_mutex);
+    if (g_runtime != nullptr) {
+        ++g_runtime->ref_count;
+        return g_runtime;
+    }
+
+    px_runtime* runtime = new px_runtime{};
+    runtime->foundation = PxCreateFoundation(PX_PHYSICS_VERSION, runtime->allocator, runtime->error_callback);
+    if (runtime->foundation == nullptr) {
+        set_error(err, err_len, "create foundation failed");
+        delete runtime;
+        return nullptr;
+    }
+
+    runtime->physics = PxCreatePhysics(PX_PHYSICS_VERSION, *runtime->foundation, PxTolerancesScale(), true, nullptr);
+    if (runtime->physics == nullptr) {
+        set_error(err, err_len, "create physics failed");
+        runtime->foundation->release();
+        delete runtime;
+        return nullptr;
+    }
+
+    runtime->ref_count = 1;
+    g_runtime = runtime;
+    return runtime;
+}
+
+void release_runtime(px_runtime* runtime) {
+    if (runtime == nullptr) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(g_runtime_mutex);
+    if (runtime != g_runtime || g_runtime->ref_count <= 0) {
+        return;
+    }
+
+    --g_runtime->ref_count;
+    if (g_runtime->ref_count > 0) {
+        return;
+    }
+
+    px_runtime* released = g_runtime;
+    g_runtime = nullptr;
+    if (released->physics != nullptr) {
+        released->physics->release();
+    }
+    if (released->foundation != nullptr) {
+        released->foundation->release();
+    }
+    delete released;
+}
+
+PxPhysics* world_physics(px_world* world) {
+    if (world == nullptr || world->runtime == nullptr) {
+        return nullptr;
+    }
+    return world->runtime->physics;
+}
+
 } // namespace
 
 extern "C" {
 
 px_world* px_world_create(int create_ground_plane, char* err, int err_len) {
-    px_world* world = new px_world{};
-    world->foundation = PxCreateFoundation(PX_PHYSICS_VERSION, world->allocator, world->error_callback);
-    if (world->foundation == nullptr) {
-        set_error(err, err_len, "create foundation failed");
-        delete world;
+    px_runtime* runtime = acquire_runtime(err, err_len);
+    if (runtime == nullptr) {
         return nullptr;
     }
 
-    world->physics = PxCreatePhysics(PX_PHYSICS_VERSION, *world->foundation, PxTolerancesScale(), true, nullptr);
-    if (world->physics == nullptr) {
-        set_error(err, err_len, "create physics failed");
-        world->foundation->release();
-        delete world;
-        return nullptr;
-    }
+    px_world* world = new px_world{};
+    world->runtime = runtime;
 
     world->dispatcher = PxDefaultCpuDispatcherCreate(1);
     if (world->dispatcher == nullptr) {
         set_error(err, err_len, "create dispatcher failed");
-        world->physics->release();
-        world->foundation->release();
-        delete world;
+        px_world_release(world);
         return nullptr;
     }
 
-    PxSceneDesc scene_desc(world->physics->getTolerancesScale());
+    PxSceneDesc scene_desc(runtime->physics->getTolerancesScale());
     scene_desc.gravity = PxVec3(0.0f, -9.81f, 0.0f);
     scene_desc.cpuDispatcher = world->dispatcher;
     scene_desc.filterShader = PxDefaultSimulationFilterShader;
-    world->scene = world->physics->createScene(scene_desc);
+    world->scene = runtime->physics->createScene(scene_desc);
     if (world->scene == nullptr) {
         set_error(err, err_len, "create scene failed");
-        world->dispatcher->release();
-        world->physics->release();
-        world->foundation->release();
-        delete world;
+        px_world_release(world);
         return nullptr;
     }
 
-    world->material = world->physics->createMaterial(0.5f, 0.5f, 0.6f);
+    world->material = runtime->physics->createMaterial(0.5f, 0.5f, 0.6f);
     if (world->material == nullptr) {
         set_error(err, err_len, "create material failed");
-        world->scene->release();
-        world->dispatcher->release();
-        world->physics->release();
-        world->foundation->release();
-        delete world;
+        px_world_release(world);
         return nullptr;
     }
 
     if (create_ground_plane != 0) {
-        PxRigidStatic* plane = PxCreatePlane(*world->physics, PxPlane(0, 1, 0, 0), *world->material);
+        PxRigidStatic* plane = PxCreatePlane(*runtime->physics, PxPlane(0, 1, 0, 0), *world->material);
         if (plane == nullptr) {
             set_error(err, err_len, "create ground plane failed");
             px_world_release(world);
@@ -162,6 +233,12 @@ void px_world_release(px_world* world) {
         }
     }
     world->players.clear();
+    for (auto* actor : world->static_actors) {
+        if (actor != nullptr) {
+            actor->release();
+        }
+    }
+    world->static_actors.clear();
     if (world->material != nullptr) {
         world->material->release();
     }
@@ -171,17 +248,48 @@ void px_world_release(px_world* world) {
     if (world->dispatcher != nullptr) {
         world->dispatcher->release();
     }
-    if (world->physics != nullptr) {
-        world->physics->release();
-    }
-    if (world->foundation != nullptr) {
-        world->foundation->release();
-    }
+    release_runtime(world->runtime);
+    world->runtime = nullptr;
     delete world;
 }
 
+int px_world_add_static_box(px_world* world, px_vec3 position, px_quat rotation, px_vec3 size, char* err, int err_len) {
+    PxPhysics* physics = world_physics(world);
+    if (physics == nullptr || world->scene == nullptr || world->material == nullptr) {
+        set_error(err, err_len, "world is nil");
+        return 1;
+    }
+    if (!valid_vec3(position) || !valid_quat(rotation) || !valid_box_size(size)) {
+        set_error(err, err_len, "invalid static box");
+        return 1;
+    }
+
+    PxBoxGeometry geometry(static_cast<PxReal>(size.x * 0.5), static_cast<PxReal>(size.y * 0.5), static_cast<PxReal>(size.z * 0.5));
+    if (!geometry.isValid()) {
+        set_error(err, err_len, "invalid static box geometry");
+        return 1;
+    }
+
+    PxQuat quat = to_px_quat(rotation).getNormalized();
+    PxTransform transform(to_px_vec3(position), quat);
+    if (!transform.isValid()) {
+        set_error(err, err_len, "invalid static box transform");
+        return 1;
+    }
+
+    PxRigidStatic* actor = PxCreateStatic(*physics, transform, geometry, *world->material);
+    if (actor == nullptr) {
+        set_error(err, err_len, "create static box failed");
+        return 1;
+    }
+    world->scene->addActor(*actor);
+    world->static_actors.push_back(actor);
+    return 0;
+}
+
 int px_world_add_player_capsule(px_world* world, uint64_t player_id, px_vec3 position, double radius, double height, char* err, int err_len) {
-    if (world == nullptr || world->physics == nullptr || world->scene == nullptr || world->material == nullptr) {
+    PxPhysics* physics = world_physics(world);
+    if (physics == nullptr || world->scene == nullptr || world->material == nullptr) {
         set_error(err, err_len, "world is nil");
         return 1;
     }
@@ -195,7 +303,7 @@ int px_world_add_player_capsule(px_world* world, uint64_t player_id, px_vec3 pos
     }
 
     PxCapsuleGeometry geometry(static_cast<PxReal>(radius), capsule_half_height(radius, height));
-    PxRigidDynamic* actor = PxCreateDynamic(*world->physics, player_transform(position, radius, height), geometry, *world->material, 1.0f);
+    PxRigidDynamic* actor = PxCreateDynamic(*physics, player_transform(position, radius, height), geometry, *world->material, 1.0f);
     if (actor == nullptr) {
         set_error(err, err_len, "create player actor failed");
         return 1;

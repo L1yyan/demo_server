@@ -19,6 +19,7 @@ type Player struct {
 	Yaw     float64 // 水平视角
 	Pitch   float64 // 垂直视角
 	HP      int     // 生命值
+	SpawnID string  // 占用的出生点ID
 	Session Session // 玩家连接会话
 	Alive   bool    // 是否存活
 }
@@ -34,6 +35,7 @@ type Session interface {
 func (p *Player) ToState() protocol.PlayerState {
 	return protocol.PlayerState{
 		PlayerID: p.ID,
+		SpawnID:  p.SpawnID,
 		X:        p.X,
 		Y:        p.Y,
 		Z:        p.Z,

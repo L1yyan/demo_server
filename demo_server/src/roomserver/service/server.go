@@ -105,6 +105,8 @@ func (s *Server) newPhysicsWorldFactory() (logic.PhysicsWorldFactory, error) {
 			PlayerCapsuleRadius: s.cfg.PlayerCapsuleRadius,
 			PlayerCapsuleHeight: s.cfg.PlayerCapsuleHeight,
 			CreateGroundPlane:   s.cfg.PhysicsGroundPlane,
+			DefaultMapID:        s.cfg.DefaultMapID,
+			MapCollisionPath:    s.cfg.MapCollisionPath,
 		}), nil
 	case roomconfig.PhysicsBackendSimple:
 		return logic.NewSimplePhysicsWorldFactory(), nil

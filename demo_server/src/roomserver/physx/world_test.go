@@ -83,6 +83,72 @@ func TestWorldRemovePlayer(t *testing.T) {
 	}
 }
 
+// TestWorldStaticMapCollision 验证地图静态 box 会阻挡玩家移动
+func TestWorldStaticMapCollision(t *testing.T) {
+	wallMapPath := writeTestMapCollision(t, "map_test", `
+    {
+      "id": "wall_test",
+      "shape": "box",
+      "position": [0, 1, 2],
+      "rotation": [0, 0, 0, 1],
+      "size": [10, 4, 0.5],
+      "is_trigger": false
+    }`)
+	world := newTestWorldWithMap(t, wallMapPath)
+	defer closeTestWorld(t, world)
+
+	if err := world.AddPlayer(1, logic.Vector3{X: 0, Y: 0, Z: 0}); err != nil {
+		t.Fatalf("add player: %v", err)
+	}
+	moveResult, err := world.MovePlayer(logic.MovePlayerRequest{
+		PlayerID:  1,
+		Direction: logic.Vector3{Z: 1},
+		Distance:  5,
+	})
+	if err != nil {
+		t.Fatalf("move player: %v", err)
+	}
+	if !moveResult.Blocked {
+		t.Fatal("expected movement to be blocked by map wall")
+	}
+	if moveResult.Position.Z >= 2 {
+		t.Fatalf("expected player to stop before wall, got z %.4f", moveResult.Position.Z)
+	}
+}
+
+// TestWorldCreateMultipleRooms 验证多个房间 world 可以共享进程级 PhysX runtime
+func TestWorldCreateMultipleRooms(t *testing.T) {
+	mapPath := writeTestMapCollision(t, "map_test", `
+    {
+      "id": "far_box_test",
+      "shape": "box",
+      "position": [100, 1, 100],
+      "rotation": [0, 0, 0, 1],
+      "size": [1, 1, 1],
+      "is_trigger": false
+    }`)
+	factory := NewFactory(Config{PlayerCapsuleRadius: 0.35, PlayerCapsuleHeight: 1.8, CreateGroundPlane: true, DefaultMapID: "map_test", MapCollisionPath: mapPath})
+
+	firstWorld, err := factory.NewWorld("room-1")
+	if err != nil {
+		t.Fatalf("new first world: %v", err)
+	}
+	defer closeTestWorld(t, firstWorld)
+
+	secondWorld, err := factory.NewWorld("room-2")
+	if err != nil {
+		t.Fatalf("new second world: %v", err)
+	}
+	defer closeTestWorld(t, secondWorld)
+
+	if err := firstWorld.AddPlayer(1, logic.Vector3{X: 0, Y: 0, Z: 0}); err != nil {
+		t.Fatalf("add first world player: %v", err)
+	}
+	if err := secondWorld.AddPlayer(2, logic.Vector3{X: 0, Y: 0, Z: 0}); err != nil {
+		t.Fatalf("add second world player: %v", err)
+	}
+}
+
 // TestWorldInvalidRequests 验证 PhysX 后端会拒绝非法请求
 func TestWorldInvalidRequests(t *testing.T) {
 	world := newTestWorld(t)
@@ -102,7 +168,22 @@ func TestWorldInvalidRequests(t *testing.T) {
 // newTestWorld 创建测试用 PhysX world
 func newTestWorld(t *testing.T) logic.PhysicsWorld {
 	t.Helper()
-	factory := NewFactory(Config{PlayerCapsuleRadius: 0.35, PlayerCapsuleHeight: 1.8, CreateGroundPlane: true})
+	emptyMapPath := writeTestMapCollision(t, "map_test", `
+    {
+      "id": "far_box_test",
+      "shape": "box",
+      "position": [100, 1, 100],
+      "rotation": [0, 0, 0, 1],
+      "size": [1, 1, 1],
+      "is_trigger": false
+    }`)
+	return newTestWorldWithMap(t, emptyMapPath)
+}
+
+// newTestWorldWithMap 创建加载指定地图碰撞的测试用 PhysX world
+func newTestWorldWithMap(t *testing.T, mapCollisionPath string) logic.PhysicsWorld {
+	t.Helper()
+	factory := NewFactory(Config{PlayerCapsuleRadius: 0.35, PlayerCapsuleHeight: 1.8, CreateGroundPlane: true, DefaultMapID: "map_test", MapCollisionPath: mapCollisionPath})
 	world, err := factory.NewWorld("physx-test")
 	if err != nil {
 		t.Fatalf("new world: %v", err)

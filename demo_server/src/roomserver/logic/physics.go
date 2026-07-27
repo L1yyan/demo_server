@@ -7,8 +7,10 @@ import (
 )
 
 const (
-	defaultPlayerCapsuleRadius = 0.35 // 玩家胶囊体半径
-	defaultPlayerCapsuleHeight = 1.8  // 玩家胶囊体高度
+	defaultPlayerCapsuleRadius = 0.35      // 玩家胶囊体半径
+	defaultPlayerCapsuleHeight = 1.8       // 玩家胶囊体高度
+	defaultSpawnAID            = "spawn_a" // 默认A出生点ID
+	defaultSpawnBID            = "spawn_b" // 默认B出生点ID
 )
 
 var (
@@ -50,6 +52,13 @@ type RaycastHit struct {
 	Distance float64 // 命中距离
 }
 
+// SpawnPoint 地图出生点
+type SpawnPoint struct {
+	ID       string  // 出生点ID
+	Position Vector3 // 出生坐标
+	Yaw      float64 // 初始水平朝向
+}
+
 // PhysicsWorld 物理世界接口
 type PhysicsWorld interface {
 	AddPlayer(playerID uint64, position Vector3) error
@@ -57,6 +66,7 @@ type PhysicsWorld interface {
 	MovePlayer(MovePlayerRequest) (MovePlayerResult, error)
 	Raycast(RaycastRequest) (RaycastHit, error)
 	BatchRaycast([]RaycastRequest) ([]RaycastHit, error)
+	SpawnPoints() []SpawnPoint
 	Close() error
 }
 
@@ -88,6 +98,14 @@ func (f SimplePhysicsWorldFactory) NewWorld(roomID string) (PhysicsWorld, error)
 // NewSimplePhysicsWorld 创建简化物理世界
 func NewSimplePhysicsWorld() *SimplePhysicsWorld {
 	return &SimplePhysicsWorld{players: make(map[uint64]Vector3)}
+}
+
+// SpawnPoints 返回简化后端默认出生点
+func (w *SimplePhysicsWorld) SpawnPoints() []SpawnPoint {
+	return []SpawnPoint{
+		{ID: defaultSpawnAID, Position: Vector3{X: -4, Y: 0.1, Z: 0}, Yaw: 0},
+		{ID: defaultSpawnBID, Position: Vector3{X: 4, Y: 0.1, Z: 0}, Yaw: 180},
+	}
 }
 
 // AddPlayer 添加玩家物理对象

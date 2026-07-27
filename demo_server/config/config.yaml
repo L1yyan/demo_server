@@ -67,3 +67,5 @@ room_server_01:
   player_capsule_radius: 0.35
   player_capsule_height: 1.8
   physics_ground_plane: true
+  default_map_id: "map_001"
+  map_collision_path: "configs/maps/map_001/collision.json"

@@ -182,10 +182,23 @@ func (r *Room) handleJoin(ctx context.Context, player *Player) {
 		return
 	}
 
+	spawnPoint, ok := r.nextSpawnPoint()
+	if !ok {
+		message, _ := protocol.NewJSONMessage(protocol.MsgJoinRoomAck, protocol.JoinRoomAck{OK: false, RoomID: r.id, Content: "spawn point not available", Tick: r.tick})
+		player.Session.Send(message)
+		return
+	}
+
 	player.RoomID = r.id
+	player.X = spawnPoint.Position.X
+	player.Y = spawnPoint.Position.Y
+	player.Z = spawnPoint.Position.Z
+	player.Yaw = spawnPoint.Yaw
+	player.Pitch = 0
 	player.HP = 100
+	player.SpawnID = spawnPoint.ID
 	player.Alive = true
-	if err := r.physics.AddPlayer(player.ID, Vector3{X: player.X, Y: player.Y, Z: player.Z}); err != nil {
+	if err := r.physics.AddPlayer(player.ID, spawnPoint.Position); err != nil {
 		message, _ := protocol.NewJSONMessage(protocol.MsgJoinRoomAck, protocol.JoinRoomAck{OK: false, RoomID: r.id, Content: "physics add player failed", Tick: r.tick})
 		player.Session.Send(message)
 		glog.Warn(ctx, "add physics player failed", glog.String("room_id", r.id), glog.Uint64("player_id", player.ID), glog.Err(err))
@@ -193,9 +206,44 @@ func (r *Room) handleJoin(ctx context.Context, player *Player) {
 	}
 	r.players[player.ID] = player
 
-	message, _ := protocol.NewJSONMessage(protocol.MsgJoinRoomAck, protocol.JoinRoomAck{OK: true, RoomID: r.id, Content: "ok", Tick: r.tick})
+	message, _ := protocol.NewJSONMessage(protocol.MsgJoinRoomAck, protocol.JoinRoomAck{
+		OK:      true,
+		RoomID:  r.id,
+		Content: "ok",
+		Tick:    r.tick,
+		SpawnID: player.SpawnID,
+		X:       player.X,
+		Y:       player.Y,
+		Z:       player.Z,
+		Yaw:     player.Yaw,
+		Pitch:   player.Pitch,
+	})
 	player.Session.Send(message)
 	glog.Info(ctx, "player joined room", glog.String("room_id", r.id), glog.Uint64("player_id", player.ID))
+}
+
+// nextSpawnPoint 选择当前房间未被占用的出生点
+func (r *Room) nextSpawnPoint() (SpawnPoint, bool) {
+	spawnPoints := r.physics.SpawnPoints()
+	if len(spawnPoints) == 0 {
+		return SpawnPoint{}, false
+	}
+	used := make(map[string]struct{}, len(r.players))
+	for _, player := range r.players {
+		if player != nil && player.SpawnID != "" {
+			used[player.SpawnID] = struct{}{}
+		}
+	}
+	for _, spawnPoint := range spawnPoints {
+		if spawnPoint.ID == "" {
+			continue
+		}
+		if _, exists := used[spawnPoint.ID]; exists {
+			continue
+		}
+		return spawnPoint, true
+	}
+	return SpawnPoint{}, false
 }
 
 // handleLeave 处理玩家离开房间

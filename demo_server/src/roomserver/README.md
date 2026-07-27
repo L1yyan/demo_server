@@ -355,12 +355,17 @@ room.loop
 1. 检查玩家是否为空。
 2. 检查房间是否满员。
 3. 检查玩家是否已在房间中。
-4. 初始化玩家状态：
+4. 从地图出生点中选择未占用的位置：
+   - 第 1 名玩家默认使用 `spawn_a`
+   - 第 2 名玩家默认使用 `spawn_b`
+5. 初始化玩家状态：
    - `RoomID`
+   - `SpawnID`
+   - `X/Y/Z/Yaw/Pitch`
    - `HP = 100`
    - `Alive = true`
-5. 保存到 `players` map。
-6. 发送 `MsgJoinRoomAck`。
+6. 保存到 `players` map。
+7. 发送 `MsgJoinRoomAck`，告知客户端当前玩家的出生点编号和初始位置。
 
 成功响应 payload：
 
@@ -369,7 +374,13 @@ room.loop
   "ok": true,
   "room_id": "room-xxx",
   "content": "ok",
-  "tick": 0
+  "tick": 0,
+  "spawn_id": "spawn_a",
+  "x": -4,
+  "y": 0.1,
+  "z": 0,
+  "yaw": 0,
+  "pitch": 0
 }
 ```
 
@@ -604,6 +615,7 @@ type PhysicsWorld interface {
     MovePlayer(MovePlayerRequest) (MovePlayerResult, error)
     Raycast(RaycastRequest) (RaycastHit, error)
     BatchRaycast([]RaycastRequest) ([]RaycastHit, error)
+    SpawnPoints() []SpawnPoint
     Close() error
 }
 ```
@@ -629,11 +641,18 @@ third_party/physx-sdk
 third_party/tools
 ```
 
-`Room` 仍然只依赖 `PhysicsWorld` 接口，不直接调用 cgo。每个房间通过 `PhysicsWorldFactory` 创建独立 PhysX scene，避免不同房间玩家发生碰撞串扰。
+`Room` 仍然只依赖 `PhysicsWorld` 接口，不直接调用 cgo。每个房间通过 `PhysicsWorldFactory` 创建独立 PhysX scene，避免不同房间玩家发生碰撞串扰。PhysX world 创建时会加载默认地图碰撞：
+
+```text
+configs/maps/map_001/collision.json
+```
+
+这份文件是 Unity 导出的服务端物理地图，当前支持 `box` 静态碰撞体，用于墙体、地面、建筑和障碍物阻挡。房间入场时会按 `spawn_points` 顺序分配出生点，所以两人房默认第 1 名玩家在 `spawn_a`，第 2 名玩家在 `spawn_b`。
 
 需要特别注意：
 
 - 默认构建会依赖 PhysX SDK，缺少 SDK 时应先运行 `scripts/setup_physx.sh`。
+- `collision.json` 丢失、格式错误或存在暂不支持的实体 shape 时，PhysX world 创建会失败。
 - 高频 raycast 应优先批量调用 `BatchRaycast`。
 - 玩家移动当前按房间 tick 调用 `MovePlayer`，后续人数增加时可扩展批量移动。
 - PhysX 对象生命周期由房间集中管理，玩家加入创建 actor，离房和停房释放 actor/world。
@@ -1149,7 +1168,7 @@ Room.update(ctx)
 `protocol.NewJSONMessage(MsgSnapshot, snapshot)`：
 
 - `MsgSnapshot`：消息类型，告诉客户端这是状态快照。
-- `snapshot`：要发送的快照结构，包含 `server_tick` 和玩家状态列表。
+- `snapshot`：要发送的快照结构，包含 `server_tick` 和玩家状态列表，玩家状态中会携带 `spawn_id`。
 - 返回 `protocol.Message`，后续交给 session 发送。
 
 `player.Session.Send(message)`：
@@ -1253,7 +1272,7 @@ token, err := protocol.GenerateRoomToken(
 - 没有统一读取 `config/config.yaml`。
 - JSON payload 只是第一版调试方案。
 - 没有完整客户端测试工具。
-- 没有真实地图和碰撞。
+- 已接入 `map_001` 的 box 静态地图碰撞，但还没有 mesh、sphere、capsule 和 trigger 区域。
 - 没有真实 PhysX。
 - 没有真实武器、伤害、死亡、结算逻辑。
 - 没有客户端预测、插值、回滚和延迟补偿。
@@ -1272,7 +1291,7 @@ token, err := protocol.GenerateRoomToken(
 6. 实现 matchserver 的房间分配和 room token 签发。
 7. logicserver 调 matchserver，客户端从 logic 拿 room token。
 8. 加入基础移动规则和服务端校验。
-9. 接入真实地图碰撞和 PhysX raycast。
+9. 扩展地图 mesh、trigger 区域和 PhysX raycast 命中结算。
 10. 实现武器、伤害、死亡、结算。
 
 ## 22. 一句话总结

@@ -25,6 +25,8 @@ type Config struct {
 	PlayerCapsuleRadius float64       // 玩家胶囊体半径
 	PlayerCapsuleHeight float64       // 玩家胶囊体高度
 	PhysicsGroundPlane  bool          // 是否创建默认地面
+	DefaultMapID        string        // 默认地图ID
+	MapCollisionPath    string        // 地图碰撞文件路径
 }
 
 // DefaultConfig 返回 roomserver 默认配置
@@ -44,6 +46,8 @@ func DefaultConfig() Config {
 		PlayerCapsuleRadius: 0.35,
 		PlayerCapsuleHeight: 1.8,
 		PhysicsGroundPlane:  true,
+		DefaultMapID:        "map_001",
+		MapCollisionPath:    "configs/maps/map_001/collision.json",
 	}
 }
 
@@ -88,6 +92,12 @@ func (c Config) Normalize() Config {
 	}
 	if c.PlayerCapsuleHeight <= 0 {
 		c.PlayerCapsuleHeight = defaults.PlayerCapsuleHeight
+	}
+	if c.DefaultMapID == "" {
+		c.DefaultMapID = defaults.DefaultMapID
+	}
+	if c.MapCollisionPath == "" {
+		c.MapCollisionPath = defaults.MapCollisionPath
 	}
 	return c
 }

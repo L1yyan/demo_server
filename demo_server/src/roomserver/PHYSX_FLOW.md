@@ -29,7 +29,7 @@ PhysX 是 NVIDIA 的 C++ 物理引擎。它负责维护一个物理世界，也�
 
 ### 2.1 Foundation
 
-`PxFoundation` 是 PhysX 的底层基础对象。它负责内存分配、错误回调等基础设施。一般一个进程可以共享 foundation，但当前实现为了房间 world 生命周期简单，先把 foundation 放在每个 `px_world` 里统一创建和释放。
+`PxFoundation` 是 PhysX 的底层基础对象。它负责内存分配、错误回调等基础设施。PhysX 限制一个进程只能创建一个 foundation，当前实现把 foundation 放在进程级 runtime 中共享，房间 world 只持有自己的 scene 和 actor。
 
 对应代码：
 
@@ -265,6 +265,8 @@ PhysicsBackend      string
 PlayerCapsuleRadius float64
 PlayerCapsuleHeight float64
 PhysicsGroundPlane  bool
+DefaultMapID        string
+MapCollisionPath    string
 ```
 
 默认值是：
@@ -274,6 +276,8 @@ PhysicsBackend:      "physx"
 PlayerCapsuleRadius: 0.35
 PlayerCapsuleHeight: 1.8
 PhysicsGroundPlane:  true
+DefaultMapID:        "map_001"
+MapCollisionPath:    "configs/maps/map_001/collision.json"
 ```
 
 对应 `config/config.yaml` 中的配置是：
@@ -283,6 +287,8 @@ physics_backend: "physx"
 player_capsule_radius: 0.35
 player_capsule_height: 1.8
 physics_ground_plane: true
+default_map_id: "map_001"
+map_collision_path: "configs/maps/map_001/collision.json"
 ```
 
 配置含义：
@@ -291,8 +297,10 @@ physics_ground_plane: true
 - `player_capsule_radius`：玩家胶囊体半径。半径越大，玩家越“胖”，越不容易穿过狭窄空间。
 - `player_capsule_height`：玩家胶囊体总高度。必须大于两倍半径，否则胶囊体不合法。
 - `physics_ground_plane`：是否创建默认 y=0 地面。
+- `default_map_id`：当前 roomserver 默认加载的地图 ID。
+- `map_collision_path`：Unity 导出的服务端地图碰撞 JSON 路径。
 
-如果后续接地图碰撞，默认地面可以保留作为兜底，也可以按地图配置关闭。
+当前默认加载 `map_001` 的 box 静态碰撞体；默认地面可以保留作为兜底，后续确认地图地面稳定后也可以按配置关闭。
 
 ## 5. 服务启动流程
 
@@ -341,6 +349,7 @@ type PhysicsWorld interface {
     MovePlayer(MovePlayerRequest) (MovePlayerResult, error)
     Raycast(RaycastRequest) (RaycastHit, error)
     BatchRaycast([]RaycastRequest) ([]RaycastHit, error)
+    SpawnPoints() []SpawnPoint
     Close() error
 }
 ```
@@ -352,6 +361,7 @@ type PhysicsWorld interface {
 - `MovePlayer`：每个 tick 根据服务端认可的移动方向推进玩家位置。
 - `Raycast`：用于开火命中、后续 AOI 遮挡等射线检测。
 - `BatchRaycast`：为后续高频批量射线检测预留。
+- `SpawnPoints`：返回地图出生点，房间入场时用于分配 `spawn_a` / `spawn_b`。
 - `Close`：房间结束时释放整个物理 world。
 
 logic 层只依赖这个 Go 接口，不直接 `import "C"`，避免业务逻辑和 cgo 绑定。
@@ -414,10 +424,10 @@ Room C -> PxScene C
 src/roomserver/logic/room.go
 ```
 
-现在玩家加入房间时，会先创建物理对象：
+现在玩家加入房间时，会先按地图出生点顺序分配 `spawn_a` / `spawn_b`，写入玩家初始位置和朝向，再创建物理对象：
 
 ```go
-r.physics.AddPlayer(player.ID, Vector3{X: player.X, Y: player.Y, Z: player.Z})
+r.physics.AddPlayer(player.ID, spawnPoint.Position)
 ```
 
 在 PhysX 后端中，这会走到 C++ 的 `px_world_add_player_capsule`：
@@ -430,7 +440,7 @@ actor->setActorFlag(PxActorFlag::eDISABLE_GRAVITY, true)
 world->scene->addActor(*actor)
 ```
 
-如果物理 actor 创建失败，玩家不会写入 `r.players`，而是返回入房失败 ack，并记录日志。这样可以避免逻辑层有玩家、物理层没有 actor 的不一致状态。
+如果物理 actor 创建失败，玩家不会写入 `r.players`，而是返回入房失败 ack，并记录日志。成功入房 ack 会携带 `spawn_id` 和初始坐标/朝向，客户端可据此绑定自己的出生点编号。这样可以避免逻辑层有玩家、物理层没有 actor 的不一致状态。
 
 成功后才执行：
 
@@ -611,18 +621,26 @@ px_world_raycast
 px_world_batch_raycast
 ```
 
-C++ 层内部的 `px_world` 持有：
+C++ 层内部的进程级 `px_runtime` 持有：
 
 ```cpp
 PxFoundation* foundation;
 PxPhysics* physics;
+int ref_count;
+```
+
+房间级 `px_world` 持有：
+
+```cpp
+px_runtime* runtime;
 PxDefaultCpuDispatcher* dispatcher;
 PxScene* scene;
 PxMaterial* material;
 std::unordered_map<uint64_t, player_actor> players;
+std::vector<PxRigidStatic*> static_actors;
 ```
 
-也就是每个房间一个完整的 PhysX scene。
+也就是进程共享 PhysX foundation/physics，每个房间独立拥有自己的 PhysX scene。
 
 ### 12.1 为什么要包一层 C ABI
 
@@ -643,8 +661,9 @@ Go
 `px_world_create` 的创建流程：
 
 ```text
-PxCreateFoundation
--> PxCreatePhysics
+acquire_runtime
+  -> 首个 world 创建 PxCreateFoundation / PxCreatePhysics
+  -> 后续 world 复用进程级 runtime 并增加引用计数
 -> PxDefaultCpuDispatcherCreate
 -> createScene
 -> createMaterial
@@ -659,7 +678,7 @@ PxCreatePlane(*world->physics, PxPlane(0, 1, 0, 0), *world->material)
 
 默认地面是 `PxRigidStatic`。它不会移动，主要用于阻挡玩家往 y<0 掉落，也给后续测试 raycast 提供一个静态碰撞体。
 
-当前第一阶段还没有接地图 mesh，所以 world 中至少包含默认地面和玩家 capsule。
+当前第一阶段已经支持从 `configs/maps/map_001/collision.json` 加载 Unity 导出的 box 静态碰撞体。mesh cooking、sphere、capsule 和 trigger 区域会在后续按玩法需要扩展。
 
 ### 13.1 创建顺序为什么重要
 
@@ -674,7 +693,7 @@ Foundation
             └── Shape/Geometry
 ```
 
-创建时必须先有 foundation，再有 physics，再创建 scene/material/actor。释放时则反过来，先释放 actor，再释放 scene/material，最后释放 physics/foundation。
+创建时必须先有进程级 foundation/physics，再创建房间级 scene/material/actor。释放时则反过来，先释放 actor 和 scene/material，最后递减 runtime 引用计数；引用计数归零时才释放 physics/foundation。
 
 ## 14. 玩家 PhysX actor
 
@@ -906,11 +925,12 @@ C++ 层释放顺序是：
 
 ```text
 所有 player actor
+所有 static actor
 material
 scene
 dispatcher
-physics
-foundation
+release_runtime
+  -> 引用计数归零时释放 physics/foundation
 ```
 
 这个顺序不能乱。PhysX 的核心对象必须最后释放，否则 scene、actor 等对象还活着时 foundation 已经释放，会有资源生命周期风险。
@@ -941,13 +961,15 @@ Room.updatePlayers
 - 每房间独立 PhysX scene。
 - 玩家 capsule actor。
 - 默认 ground plane。
+- 加载 `map_001` 的 box 静态地图碰撞。
+- 按地图 `spawn_points` 分配 `spawn_a` / `spawn_b`。
 - 服务端 tick 中通过 PhysX 推进玩家位置。
 - PhysX raycast 查询。
 - 玩家离房和房间停止时释放资源。
 
 后续还需要补：
 
-- 地图静态碰撞加载和 mesh cooking。
+- 地图 mesh cooking、sphere/capsule 碰撞体和 trigger 区域。
 - raycast 命中后的伤害结算。
 - `RaycastRequest.Mask` 对应的 PhysX query filter。
 - AOI 遮挡接入 `BatchRaycast`。

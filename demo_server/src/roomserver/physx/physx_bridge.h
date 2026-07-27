@@ -15,6 +15,13 @@ typedef struct px_vec3 {
     double z;
 } px_vec3;
 
+typedef struct px_quat {
+    double x;
+    double y;
+    double z;
+    double w;
+} px_quat;
+
 typedef struct px_raycast_hit {
     int hit;
     uint64_t target_id;
@@ -25,6 +32,7 @@ typedef struct px_raycast_hit {
 
 px_world* px_world_create(int create_ground_plane, char* err, int err_len);
 void px_world_release(px_world* world);
+int px_world_add_static_box(px_world* world, px_vec3 position, px_quat rotation, px_vec3 size, char* err, int err_len);
 int px_world_add_player_capsule(px_world* world, uint64_t player_id, px_vec3 position, double radius, double height, char* err, int err_len);
 int px_world_remove_player(px_world* world, uint64_t player_id, char* err, int err_len);
 int px_world_move_player(px_world* world, uint64_t player_id, px_vec3 direction, double distance, px_vec3* out_position, int* out_blocked, char* err, int err_len);

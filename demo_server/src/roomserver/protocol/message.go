@@ -49,10 +49,16 @@ type JoinRoomRequest struct {
 
 // JoinRoomAck 加入房间响应
 type JoinRoomAck struct {
-	OK      bool   `json:"ok"`      // 是否成功
-	RoomID  string `json:"room_id"` // 房间ID
-	Content string `json:"content"` // 响应信息
-	Tick    int64  `json:"tick"`    // 当前房间帧号
+	OK      bool    `json:"ok"`       // 是否成功
+	RoomID  string  `json:"room_id"`  // 房间ID
+	Content string  `json:"content"`  // 响应信息
+	Tick    int64   `json:"tick"`     // 当前房间帧号
+	SpawnID string  `json:"spawn_id"` // 出生点ID
+	X       float64 `json:"x"`        // 初始X坐标
+	Y       float64 `json:"y"`        // 初始Y坐标
+	Z       float64 `json:"z"`        // 初始Z坐标
+	Yaw     float64 `json:"yaw"`      // 初始水平视角
+	Pitch   float64 `json:"pitch"`    // 初始垂直视角
 }
 
 // Heartbeat 心跳消息
@@ -74,6 +80,7 @@ type PlayerInput struct {
 // PlayerState 玩家快照状态
 type PlayerState struct {
 	PlayerID uint64  `json:"player_id"` // 玩家ID
+	SpawnID  string  `json:"spawn_id"`  // 出生点ID
 	X        float64 `json:"x"`         // X坐标
 	Y        float64 `json:"y"`         // Y坐标
 	Z        float64 `json:"z"`         // Z坐标

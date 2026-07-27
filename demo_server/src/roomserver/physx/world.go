@@ -9,6 +9,7 @@ package physx
 #include "physx_bridge.h"
 
 typedef struct px_vec3 CVec3;
+typedef struct px_quat CQuat;
 typedef struct px_raycast_hit CRaycastHit;
 */
 import "C"
@@ -16,6 +17,7 @@ import "C"
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"unsafe"
 
 	"demo_server/src/roomserver/logic"
@@ -30,8 +32,9 @@ type Factory struct {
 
 // World PhysX 物理世界
 type World struct {
-	ptr *C.px_world
-	cfg Config
+	ptr         *C.px_world
+	cfg         Config
+	spawnPoints []logic.SpawnPoint
 }
 
 // NewFactory 创建 PhysX 物理世界工厂
@@ -41,6 +44,12 @@ func NewFactory(cfg Config) *Factory {
 	}
 	if cfg.PlayerCapsuleHeight <= 0 {
 		cfg.PlayerCapsuleHeight = 1.8
+	}
+	if cfg.DefaultMapID == "" {
+		cfg.DefaultMapID = "map_001"
+	}
+	if cfg.MapCollisionPath == "" {
+		cfg.MapCollisionPath = "configs/maps/map_001/collision.json"
 	}
 	return &Factory{cfg: cfg}
 }
@@ -58,7 +67,56 @@ func (f *Factory) NewWorld(roomID string) (logic.PhysicsWorld, error) {
 	if ptr == nil {
 		return nil, cError(errBuf, "create physx world")
 	}
-	return &World{ptr: ptr, cfg: f.cfg}, nil
+	world := &World{ptr: ptr, cfg: f.cfg}
+	if err := world.loadMapCollision(); err != nil {
+		_ = world.Close()
+		return nil, err
+	}
+	return world, nil
+}
+
+// loadMapCollision 加载地图静态碰撞体
+func (w *World) loadMapCollision() error {
+	if w.ptr == nil {
+		return logic.ErrPhysicsWorldClosed
+	}
+	collision, err := loadMapCollision(w.cfg.MapCollisionPath, w.cfg.DefaultMapID)
+	if err != nil {
+		return fmt.Errorf("load physx map collision: %w", err)
+	}
+	w.spawnPoints = toLogicSpawnPoints(collision.SpawnPoints)
+	for _, collider := range collision.Colliders {
+		// 触发器不参与实体阻挡，后续区域逻辑单独处理
+		if collider.IsTrigger {
+			continue
+		}
+		if strings.ToLower(strings.TrimSpace(collider.Shape)) != mapColliderShapeBox {
+			return fmt.Errorf("%w: %s", ErrUnsupportedMapColliderShape, collider.Shape)
+		}
+		if err := w.addStaticBox(collider); err != nil {
+			return fmt.Errorf("add static collider %s: %w", collider.ID, err)
+		}
+	}
+	return nil
+}
+
+// addStaticBox 添加地图静态 box 碰撞体
+func (w *World) addStaticBox(collider MapCollider) error {
+	errBuf := newCErrorBuffer()
+	defer C.free(unsafe.Pointer(errBuf))
+
+	code := C.px_world_add_static_box(w.ptr, toCVec3(toLogicVector3(collider.Position)), toCQuat(toQuaternion(collider.Rotation)), toCVec3(toLogicVector3(collider.Size)), errBuf, cErrorBufferSize)
+	if code != 0 {
+		return cError(errBuf, "add physx static box")
+	}
+	return nil
+}
+
+// SpawnPoints 返回地图出生点
+func (w *World) SpawnPoints() []logic.SpawnPoint {
+	spawnPoints := make([]logic.SpawnPoint, len(w.spawnPoints))
+	copy(spawnPoints, w.spawnPoints)
+	return spawnPoints
 }
 
 // AddPlayer 添加玩家胶囊体
@@ -173,6 +231,11 @@ func (w *World) Close() error {
 // toCVec3 将 Go 向量转换为 C 向量
 func toCVec3(value logic.Vector3) C.CVec3 {
 	return C.CVec3{x: C.double(value.X), y: C.double(value.Y), z: C.double(value.Z)}
+}
+
+// toCQuat 将 Go 四元数转换为 C 四元数
+func toCQuat(value Quaternion) C.CQuat {
+	return C.CQuat{x: C.double(value.X), y: C.double(value.Y), z: C.double(value.Z), w: C.double(value.W)}
 }
 
 // fromCVec3 将 C 向量转换为 Go 向量
