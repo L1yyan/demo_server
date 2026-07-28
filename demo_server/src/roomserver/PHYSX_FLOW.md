@@ -512,10 +512,11 @@ src/roomserver/logic/room.go
 buildMovePlayerRequest(playerID, input, r.tickRate)
 ```
 
-移动距离计算方式：
+移动距离和物理步长计算方式：
 
 ```go
-defaultPlayerMoveSpeed / float64(tickRate)
+deltaTime := 1 / float64(tickRate)
+distance := defaultPlayerMoveSpeed * deltaTime
 ```
 
 当前默认：
@@ -583,6 +584,8 @@ physx backend requires building with -tags physx
 
 这样不会静默降级，避免误以为已经启用 PhysX。
 
+当前 `MovePlayerRequest` 会携带 `DeltaTime`，PhysX C++ 层使用房间 tick 对应的步长执行 `simulate(delta_time)`，不再固定为 `1/60`。Go 封装也提供 `GetPlayerPosition` 和 `SetPlayerPosition`，用于纠偏、测试和后续服务端回滚基础。
+
 ### 11.1 为什么要有 Go 封装层
 
 cgo 可以让 Go 调 C，但不适合把业务逻辑散落在 cgo 调用点里。当前封装层有几个目的：
@@ -617,6 +620,8 @@ px_world_release
 px_world_add_player_capsule
 px_world_remove_player
 px_world_move_player
+px_world_get_player_position
+px_world_set_player_position
 px_world_raycast
 px_world_batch_raycast
 ```

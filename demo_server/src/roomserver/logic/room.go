@@ -2,6 +2,7 @@ package logic
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"demo_server/pkg/glog"
@@ -14,6 +15,7 @@ const (
 	roomEventJoin roomEventType = iota + 1
 	roomEventLeave
 	roomEventInput
+	roomEventInputBatch
 )
 
 type roomEvent struct {
@@ -21,11 +23,7 @@ type roomEvent struct {
 	player   *Player
 	playerID uint64
 	input    protocol.PlayerInput
-}
-
-type playerInputState struct {
-	input   authoritativeInput // 最近一次有效输入
-	hasData bool               // 是否已收到过有效输入
+	batch    protocol.PlayerInputBatch
 }
 
 // Room 单局房间
@@ -34,18 +32,28 @@ type Room struct {
 	maxPlayers     int
 	tickRate       int
 	snapshotRate   int
+	syncConfig     SyncConfig
+	syncMode       string
+	mapID          string
+	physicsHash    string
+	currentTick    atomic.Int64
 	aoi            AOIFilter
 	physics        PhysicsWorld
 	events         chan roomEvent
 	stop           chan struct{}
 	players        map[uint64]*Player
-	inputs         map[uint64]playerInputState
+	syncStates     map[uint64]*playerSyncState
 	tick           int64
 	lastSnapshotAt int64
 }
 
 // NewRoom 创建房间
 func NewRoom(id string, maxPlayers int, tickRate int, snapshotRate int, aoi AOIFilter, physics PhysicsWorld) *Room {
+	return NewRoomWithSync(id, maxPlayers, tickRate, snapshotRate, aoi, physics, SyncConfig{}, "", "")
+}
+
+// NewRoomWithSync 创建带同步配置的房间
+func NewRoomWithSync(id string, maxPlayers int, tickRate int, snapshotRate int, aoi AOIFilter, physics PhysicsWorld, syncConfig SyncConfig, mapID string, physicsHash string) *Room {
 	if tickRate <= 0 {
 		tickRate = 20
 	}
@@ -58,17 +66,26 @@ func NewRoom(id string, maxPlayers int, tickRate int, snapshotRate int, aoi AOIF
 	if physics == nil {
 		physics = NewSimplePhysicsWorld()
 	}
+	syncConfig = syncConfig.Normalize(tickRate)
+	syncMode := SyncModeSnapshotOnly
+	if syncConfig.PredictionEnabled {
+		syncMode = SyncModePredictionAuthoritative
+	}
 	return &Room{
 		id:           id,
 		maxPlayers:   maxPlayers,
 		tickRate:     tickRate,
 		snapshotRate: snapshotRate,
+		syncConfig:   syncConfig,
+		syncMode:     syncMode,
+		mapID:        mapID,
+		physicsHash:  physicsHash,
 		aoi:          aoi,
 		physics:      physics,
 		events:       make(chan roomEvent, 256),
 		stop:         make(chan struct{}),
 		players:      make(map[uint64]*Player),
-		inputs:       make(map[uint64]playerInputState),
+		syncStates:   make(map[uint64]*playerSyncState),
 	}
 }
 
@@ -79,7 +96,7 @@ func (r *Room) ID() string {
 
 // Tick 返回当前房间帧号
 func (r *Room) Tick() int64 {
-	return r.tick
+	return r.currentTick.Load()
 }
 
 // Start 启动房间循环
@@ -110,6 +127,11 @@ func (r *Room) Leave(playerID uint64) bool {
 // PushInput 投递玩家输入事件
 func (r *Room) PushInput(playerID uint64, input protocol.PlayerInput) bool {
 	return r.pushEvent(roomEvent{typeID: roomEventInput, playerID: playerID, input: input})
+}
+
+// PushInputBatch 投递玩家批量输入事件
+func (r *Room) PushInputBatch(playerID uint64, batch protocol.PlayerInputBatch) bool {
+	return r.pushEvent(roomEvent{typeID: roomEventInputBatch, playerID: playerID, batch: batch})
 }
 
 // pushEvent 写入房间事件队列
@@ -162,7 +184,9 @@ func (r *Room) handleEvent(ctx context.Context, event roomEvent) {
 	case roomEventLeave:
 		r.handleLeave(ctx, event.playerID)
 	case roomEventInput:
-		r.handleInput(event.playerID, event.input)
+		r.handleInput(ctx, event.playerID, event.input)
+	case roomEventInputBatch:
+		r.handleInputBatch(ctx, event.playerID, event.batch)
 	}
 }
 
@@ -172,19 +196,19 @@ func (r *Room) handleJoin(ctx context.Context, player *Player) {
 		return
 	}
 	if len(r.players) >= r.maxPlayers {
-		message, _ := protocol.NewJSONMessage(protocol.MsgJoinRoomAck, protocol.JoinRoomAck{OK: false, RoomID: r.id, Content: "room is full", Tick: r.tick})
+		message, _ := protocol.NewJSONMessage(protocol.MsgJoinRoomAck, r.buildJoinAck(false, nil, "room is full"))
 		player.Session.Send(message)
 		return
 	}
 	if _, exists := r.players[player.ID]; exists {
-		message, _ := protocol.NewJSONMessage(protocol.MsgJoinRoomAck, protocol.JoinRoomAck{OK: false, RoomID: r.id, Content: "player already joined", Tick: r.tick})
+		message, _ := protocol.NewJSONMessage(protocol.MsgJoinRoomAck, r.buildJoinAck(false, nil, "player already joined"))
 		player.Session.Send(message)
 		return
 	}
 
 	spawnPoint, ok := r.nextSpawnPoint()
 	if !ok {
-		message, _ := protocol.NewJSONMessage(protocol.MsgJoinRoomAck, protocol.JoinRoomAck{OK: false, RoomID: r.id, Content: "spawn point not available", Tick: r.tick})
+		message, _ := protocol.NewJSONMessage(protocol.MsgJoinRoomAck, r.buildJoinAck(false, nil, "spawn point not available"))
 		player.Session.Send(message)
 		return
 	}
@@ -198,28 +222,67 @@ func (r *Room) handleJoin(ctx context.Context, player *Player) {
 	player.HP = 100
 	player.SpawnID = spawnPoint.ID
 	player.Alive = true
+	player.SyncMode = r.playerSyncMode(player)
 	if err := r.physics.AddPlayer(player.ID, spawnPoint.Position); err != nil {
-		message, _ := protocol.NewJSONMessage(protocol.MsgJoinRoomAck, protocol.JoinRoomAck{OK: false, RoomID: r.id, Content: "physics add player failed", Tick: r.tick})
+		message, _ := protocol.NewJSONMessage(protocol.MsgJoinRoomAck, r.buildJoinAck(false, nil, "physics add player failed"))
 		player.Session.Send(message)
 		glog.Warn(ctx, "add physics player failed", glog.String("room_id", r.id), glog.Uint64("player_id", player.ID), glog.Err(err))
 		return
 	}
 	r.players[player.ID] = player
+	r.syncStates[player.ID] = newPlayerSyncState()
+	r.saveAuthoritativeState(player.ID, player)
 
-	message, _ := protocol.NewJSONMessage(protocol.MsgJoinRoomAck, protocol.JoinRoomAck{
-		OK:      true,
-		RoomID:  r.id,
-		Content: "ok",
-		Tick:    r.tick,
-		SpawnID: player.SpawnID,
-		X:       player.X,
-		Y:       player.Y,
-		Z:       player.Z,
-		Yaw:     player.Yaw,
-		Pitch:   player.Pitch,
-	})
+	message, _ := protocol.NewJSONMessage(protocol.MsgJoinRoomAck, r.buildJoinAck(true, player, "ok"))
 	player.Session.Send(message)
 	glog.Info(ctx, "player joined room", glog.String("room_id", r.id), glog.Uint64("player_id", player.ID))
+}
+
+// playerSyncMode 判断玩家实际使用的同步模式
+func (r *Room) playerSyncMode(player *Player) string {
+	if player == nil || !r.syncConfig.PredictionEnabled || !player.PredictionEnabled || player.SyncVersion <= 0 {
+		return SyncModeSnapshotOnly
+	}
+	if r.physicsHash != "" && player.PhysicsHash != r.physicsHash {
+		return SyncModeSnapshotOnly
+	}
+	return SyncModePredictionAuthoritative
+}
+
+// buildJoinAck 构造加入房间响应
+func (r *Room) buildJoinAck(ok bool, player *Player, content string) protocol.JoinRoomAck {
+	tick := r.Tick()
+	ack := protocol.JoinRoomAck{
+		OK:                         ok,
+		RoomID:                     r.id,
+		Content:                    content,
+		Tick:                       tick,
+		TickRate:                   r.tickRate,
+		SnapshotRate:               r.snapshotRate,
+		ServerTime:                 time.Now().UnixMilli(),
+		SyncMode:                   r.syncMode,
+		MapID:                      r.mapID,
+		PhysicsHash:                r.physicsHash,
+		RollbackWindowTicks:        r.syncConfig.RollbackWindowTicks,
+		FutureInputWindowTicks:     r.syncConfig.FutureInputWindowTicks,
+		PredictionKeyframeInterval: r.syncConfig.PredictionKeyframeInterval,
+		PositionTolerance:          r.syncConfig.PositionTolerance,
+		HardPositionTolerance:      r.syncConfig.HardPositionTolerance,
+		AngleTolerance:             r.syncConfig.AngleTolerance,
+	}
+	if player != nil {
+		if player.SyncMode == "" {
+			player.SyncMode = r.playerSyncMode(player)
+		}
+		ack.SyncMode = player.SyncMode
+		ack.SpawnID = player.SpawnID
+		ack.X = player.X
+		ack.Y = player.Y
+		ack.Z = player.Z
+		ack.Yaw = player.Yaw
+		ack.Pitch = player.Pitch
+	}
+	return ack
 }
 
 // nextSpawnPoint 选择当前房间未被占用的出生点
@@ -252,31 +315,87 @@ func (r *Room) handleLeave(ctx context.Context, playerID uint64) {
 		return
 	}
 	delete(r.players, playerID)
-	delete(r.inputs, playerID)
+	delete(r.syncStates, playerID)
 	if err := r.physics.RemovePlayer(playerID); err != nil {
 		glog.Warn(ctx, "remove physics player failed", glog.String("room_id", r.id), glog.Uint64("player_id", playerID), glog.Err(err))
 	}
 	glog.Info(ctx, "player left room", glog.String("room_id", r.id), glog.Uint64("player_id", playerID))
 }
 
-// handleInput 处理玩家输入
-func (r *Room) handleInput(playerID uint64, input protocol.PlayerInput) {
+// handleInput 处理旧单帧玩家输入
+func (r *Room) handleInput(ctx context.Context, playerID uint64, input protocol.PlayerInput) {
+	syncState := r.ensureSyncState(playerID)
+	targetTick := input.ClientTick
+	if targetTick <= syncState.lastAppliedTick || targetTick < r.tick-r.syncConfig.RollbackWindowTicks || targetTick > r.tick+r.syncConfig.FutureInputWindowTicks {
+		targetTick = r.tick + 1
+	}
+	if _, exists := syncState.inputs[targetTick]; exists {
+		targetTick++
+	}
+	frame := protocol.PlayerInputFrame{
+		ClientTick: targetTick,
+		MoveX:      input.MoveX,
+		MoveZ:      input.MoveZ,
+		Yaw:        input.Yaw,
+		Pitch:      input.Pitch,
+		Fire:       input.Fire,
+	}
+	r.handleInputBatch(ctx, playerID, protocol.PlayerInputBatch{BaseClientTick: targetTick, Frames: []protocol.PlayerInputFrame{frame}})
+}
+
+// handleInputBatch 处理批量玩家输入
+func (r *Room) handleInputBatch(ctx context.Context, playerID uint64, batch protocol.PlayerInputBatch) {
 	player, exists := r.players[playerID]
-	if !exists || !player.Alive {
+	if !exists || player == nil || !player.Alive {
+		return
+	}
+	syncState := r.ensureSyncState(playerID)
+	if len(batch.Frames) == 0 {
+		return
+	}
+	if len(batch.Frames) > r.syncConfig.MaxInputBatchFrames {
+		glog.Warn(ctx, "reject oversized input batch", glog.String("room_id", r.id), glog.Uint64("player_id", playerID), glog.Int("frames", len(batch.Frames)))
 		return
 	}
 
-	// 客户端只提交输入意图，最终移动由服务端固定 tick 计算
-	sanitized, ok := sanitizePlayerInput(input)
-	if !ok {
-		return
+	for _, frame := range batch.Frames {
+		inputTick := frame.ClientTick
+		if inputTick == 0 {
+			inputTick = batch.BaseClientTick
+		}
+		if inputTick < r.tick-r.syncConfig.RollbackWindowTicks {
+			r.sendCurrentCorrection(player, syncState, correctionReasonStaleInput)
+			continue
+		}
+		if inputTick > r.tick+r.syncConfig.FutureInputWindowTicks {
+			continue
+		}
+		if inputTick <= syncState.lastAppliedTick {
+			continue
+		}
+		if _, exists := syncState.inputs[inputTick]; exists {
+			continue
+		}
+
+		frame.ClientTick = inputTick
+		sanitized, ok := sanitizePlayerInput(inputFrameToPlayerInput(frame))
+		if !ok {
+			continue
+		}
+		syncState.inputs[inputTick] = sanitized
+		if inputTick > syncState.lastAcceptedInputTick {
+			syncState.lastAcceptedInputTick = inputTick
+		}
+		if frame.PredictedState != nil && predictedStateFinite(*frame.PredictedState) {
+			syncState.predictedStates[inputTick] = *frame.PredictedState
+		}
 	}
-	r.inputs[playerID] = playerInputState{input: sanitized, hasData: true}
 }
 
 // update 更新房间状态并按频率广播快照
 func (r *Room) update(ctx context.Context) {
 	r.tick++
+	r.currentTick.Store(r.tick)
 	r.updatePlayers(ctx)
 	if r.snapshotRate <= 0 {
 		return
@@ -289,6 +408,7 @@ func (r *Room) update(ctx context.Context) {
 		return
 	}
 	r.lastSnapshotAt = r.tick
+	r.broadcastAcks(ctx)
 	r.broadcastSnapshots(ctx)
 }
 
@@ -298,27 +418,151 @@ func (r *Room) updatePlayers(ctx context.Context) {
 		if player == nil || !player.Alive {
 			continue
 		}
-		inputState, ok := r.inputs[playerID]
-		if !ok || !inputState.hasData {
+		syncState := r.ensureSyncState(playerID)
+		inputState, hasExactInput := r.inputForTick(syncState, r.tick)
+		if hasExactInput || syncState.hasLastInput {
+			r.simulatePlayerTick(ctx, player, inputState, hasExactInput)
+		}
+		syncState.lastAppliedTick = r.tick
+		r.saveAuthoritativeState(playerID, player)
+		r.verifyPredictedState(ctx, player, syncState, r.tick)
+		r.cleanupSyncState(syncState)
+	}
+}
+
+// inputForTick 获取当前服务端帧应使用的输入
+func (r *Room) inputForTick(syncState *playerSyncState, tick int64) (authoritativeInput, bool) {
+	if syncState == nil {
+		return authoritativeInput{}, false
+	}
+	input, exists := syncState.inputs[tick]
+	if exists {
+		syncState.lastInput = input
+		syncState.hasLastInput = true
+		syncState.lastInputTick = tick
+		return input, true
+	}
+	if syncState.hasLastInput && tick-syncState.lastInputTick <= r.syncConfig.MaxInputHoldTicks {
+		held := syncState.lastInput
+		held.ClientTick = tick
+		held.Fire = false
+		return held, false
+	}
+	return authoritativeInput{}, false
+}
+
+// simulatePlayerTick 使用服务端权威输入模拟玩家一帧
+func (r *Room) simulatePlayerTick(ctx context.Context, player *Player, input authoritativeInput, hasExactInput bool) {
+	applyViewRotation(player, input)
+	moveReq, ok := buildMovePlayerRequest(player.ID, input, r.tickRate)
+	if ok && moveReq.Distance > 0 {
+		// 由物理世界计算最终位置，避免逻辑层绕过碰撞规则
+		result, err := r.physics.MovePlayer(moveReq)
+		if err != nil {
+			glog.Warn(ctx, "move physics player failed", glog.String("room_id", r.id), glog.Uint64("player_id", player.ID), glog.Err(err))
+			r.sendCurrentCorrection(player, r.ensureSyncState(player.ID), "physics_error")
+		} else {
+			player.X = result.Position.X
+			player.Y = result.Position.Y
+			player.Z = result.Position.Z
+		}
+	}
+	if hasExactInput && input.Fire {
+		_, _ = r.physics.Raycast(RaycastRequest{Origin: Vector3{X: player.X, Y: player.Y, Z: player.Z}, Direction: viewDirection(player.Yaw, player.Pitch), MaxDistance: 100})
+	}
+}
+
+// saveAuthoritativeState 保存玩家当前权威状态
+func (r *Room) saveAuthoritativeState(playerID uint64, player *Player) {
+	syncState := r.ensureSyncState(playerID)
+	syncState.authoritativeHistory[r.tick] = frameStateFromPlayer(r.tick, player)
+}
+
+// verifyPredictedState 校验客户端预测状态并在超阈值时纠偏
+func (r *Room) verifyPredictedState(ctx context.Context, player *Player, syncState *playerSyncState, tick int64) {
+	if !r.syncConfig.PredictionEnabled || syncState == nil || player == nil || player.SyncMode != SyncModePredictionAuthoritative {
+		return
+	}
+	predicted, exists := syncState.predictedStates[tick]
+	if !exists {
+		return
+	}
+	if r.syncConfig.PredictionKeyframeInterval > 1 && tick%r.syncConfig.PredictionKeyframeInterval != 0 {
+		return
+	}
+	authoritative, exists := syncState.authoritativeHistory[tick]
+	if !exists {
+		return
+	}
+	posError := positionError(predicted, authoritative)
+	angError := angleError(predicted, authoritative)
+	syncState.lastVerifiedTick = tick
+	if posError <= r.syncConfig.PositionTolerance && angError <= r.syncConfig.AngleTolerance {
+		return
+	}
+
+	reason := correctionReasonPositionError
+	if posError <= r.syncConfig.PositionTolerance && angError > r.syncConfig.AngleTolerance {
+		reason = correctionReasonAngleError
+	}
+	force := posError > r.syncConfig.HardPositionTolerance
+	if !force && tick-syncState.lastCorrectionTick < r.syncConfig.CorrectionMinIntervalTicks {
+		return
+	}
+	if err := r.sendCorrection(player, syncState, authoritative, reason, posError, angError); err != nil {
+		glog.Warn(ctx, "send state correction failed", glog.String("room_id", r.id), glog.Uint64("player_id", player.ID), glog.Err(err))
+	}
+}
+
+// sendCurrentCorrection 发送玩家当前权威状态纠偏
+func (r *Room) sendCurrentCorrection(player *Player, syncState *playerSyncState, reason string) {
+	if player == nil || syncState == nil || player.SyncMode != SyncModePredictionAuthoritative {
+		return
+	}
+	state := frameStateFromPlayer(r.tick, player)
+	if err := r.sendCorrection(player, syncState, state, reason, 0, 0); err != nil {
+		return
+	}
+}
+
+// sendCorrection 向玩家发送权威纠偏消息
+func (r *Room) sendCorrection(player *Player, syncState *playerSyncState, state playerFrameState, reason string, posError float64, angError float64) error {
+	message, err := protocol.NewJSONMessage(protocol.MsgStateCorrection, protocol.StateCorrection{
+		PlayerID:              player.ID,
+		RollbackTick:          state.Tick,
+		ServerTick:            r.tick,
+		LastAcceptedInputTick: syncState.lastAcceptedInputTick,
+		State:                 state.toPlayerState(),
+		Reason:                reason,
+		PositionError:         posError,
+		AngleError:            angError,
+	})
+	if err != nil {
+		return err
+	}
+	if player.Session.Send(message) {
+		syncState.lastCorrectionTick = r.tick
+	}
+	return nil
+}
+
+// broadcastAcks 按快照频率向玩家发送输入确认
+func (r *Room) broadcastAcks(ctx context.Context) {
+	for playerID, player := range r.players {
+		if player == nil || player.SyncMode != SyncModePredictionAuthoritative {
 			continue
 		}
-
-		applyViewRotation(player, inputState.input)
-		moveReq, ok := buildMovePlayerRequest(playerID, inputState.input, r.tickRate)
-		if ok && moveReq.Distance > 0 {
-			// 由物理世界计算最终位置，避免逻辑层绕过碰撞规则
-			result, err := r.physics.MovePlayer(moveReq)
-			if err != nil {
-				glog.Warn(ctx, "move physics player failed", glog.String("room_id", r.id), glog.Uint64("player_id", playerID), glog.Err(err))
-			} else {
-				player.X = result.Position.X
-				player.Y = result.Position.Y
-				player.Z = result.Position.Z
-			}
+		syncState := r.ensureSyncState(playerID)
+		message, err := protocol.NewJSONMessage(protocol.MsgInputAck, protocol.InputAck{
+			ServerTick:            r.tick,
+			LastAcceptedInputTick: syncState.lastAcceptedInputTick,
+			LastVerifiedInputTick: syncState.lastVerifiedTick,
+		})
+		if err != nil {
+			glog.Error(ctx, "build input ack failed", glog.String("room_id", r.id), glog.Err(err))
+			continue
 		}
-		if inputState.input.Fire {
-			_, _ = r.physics.Raycast(RaycastRequest{Origin: Vector3{X: player.X, Y: player.Y, Z: player.Z}, Direction: viewDirection(player.Yaw, player.Pitch), MaxDistance: 100})
-		}
+		player.Session.Send(message)
 	}
 }
 
@@ -341,5 +585,38 @@ func (r *Room) broadcastSnapshots(ctx context.Context) {
 			continue
 		}
 		player.Session.Send(message)
+	}
+}
+
+// ensureSyncState 获取或创建玩家同步状态
+func (r *Room) ensureSyncState(playerID uint64) *playerSyncState {
+	syncState := r.syncStates[playerID]
+	if syncState == nil {
+		syncState = newPlayerSyncState()
+		r.syncStates[playerID] = syncState
+	}
+	return syncState
+}
+
+// cleanupSyncState 清理超出回滚窗口的同步历史
+func (r *Room) cleanupSyncState(syncState *playerSyncState) {
+	if syncState == nil {
+		return
+	}
+	minTick := r.tick - r.syncConfig.RollbackWindowTicks
+	for tick := range syncState.inputs {
+		if tick < minTick || tick <= syncState.lastAppliedTick {
+			delete(syncState.inputs, tick)
+		}
+	}
+	for tick := range syncState.predictedStates {
+		if tick < minTick || tick <= syncState.lastVerifiedTick-r.syncConfig.RollbackWindowTicks {
+			delete(syncState.predictedStates, tick)
+		}
+	}
+	for tick := range syncState.authoritativeHistory {
+		if tick < minTick {
+			delete(syncState.authoritativeHistory, tick)
+		}
 	}
 }

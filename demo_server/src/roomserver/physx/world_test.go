@@ -58,6 +58,26 @@ func TestWorldMoveAndRaycast(t *testing.T) {
 	}
 }
 
+// TestWorldSetGetPlayerPosition 验证 PhysX 后端支持玩家位置读写
+func TestWorldSetGetPlayerPosition(t *testing.T) {
+	world := newTestWorld(t)
+	defer closeTestWorld(t, world)
+
+	if err := world.AddPlayer(1, logic.Vector3{}); err != nil {
+		t.Fatalf("add player: %v", err)
+	}
+	if err := world.SetPlayerPosition(1, logic.Vector3{X: 2, Y: 0.2, Z: -3}); err != nil {
+		t.Fatalf("set player position: %v", err)
+	}
+	position, err := world.GetPlayerPosition(1)
+	if err != nil {
+		t.Fatalf("get player position: %v", err)
+	}
+	if math.Abs(position.X-2) > testFloatTolerance || math.Abs(position.Y-0.2) > testFloatTolerance || math.Abs(position.Z+3) > testFloatTolerance {
+		t.Fatalf("unexpected player position: %+v", position)
+	}
+}
+
 // TestWorldRemovePlayer 验证移除玩家后 actor 不再被 raycast 命中
 func TestWorldRemovePlayer(t *testing.T) {
 	world := newTestWorld(t)

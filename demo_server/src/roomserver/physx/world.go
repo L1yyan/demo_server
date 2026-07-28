@@ -159,11 +159,46 @@ func (w *World) MovePlayer(req logic.MovePlayerRequest) (logic.MovePlayerResult,
 
 	var outPosition C.CVec3
 	var outBlocked C.int
-	code := C.px_world_move_player(w.ptr, C.uint64_t(req.PlayerID), toCVec3(req.Direction), C.double(req.Distance), &outPosition, &outBlocked, errBuf, cErrorBufferSize)
+	deltaTime := req.DeltaTime
+	if deltaTime <= 0 {
+		deltaTime = 1.0 / 60.0
+	}
+	code := C.px_world_move_player(w.ptr, C.uint64_t(req.PlayerID), toCVec3(req.Direction), C.double(req.Distance), C.double(deltaTime), &outPosition, &outBlocked, errBuf, cErrorBufferSize)
 	if code != 0 {
 		return logic.MovePlayerResult{}, cError(errBuf, "move physx player")
 	}
 	return logic.MovePlayerResult{Position: fromCVec3(outPosition), Blocked: outBlocked != 0}, nil
+}
+
+// GetPlayerPosition 读取玩家当前 PhysX 位置
+func (w *World) GetPlayerPosition(playerID uint64) (logic.Vector3, error) {
+	if w.ptr == nil {
+		return logic.Vector3{}, logic.ErrPhysicsWorldClosed
+	}
+	errBuf := newCErrorBuffer()
+	defer C.free(unsafe.Pointer(errBuf))
+
+	var outPosition C.CVec3
+	code := C.px_world_get_player_position(w.ptr, C.uint64_t(playerID), &outPosition, errBuf, cErrorBufferSize)
+	if code != 0 {
+		return logic.Vector3{}, cError(errBuf, "get physx player position")
+	}
+	return fromCVec3(outPosition), nil
+}
+
+// SetPlayerPosition 设置玩家当前 PhysX 位置
+func (w *World) SetPlayerPosition(playerID uint64, position logic.Vector3) error {
+	if w.ptr == nil {
+		return logic.ErrPhysicsWorldClosed
+	}
+	errBuf := newCErrorBuffer()
+	defer C.free(unsafe.Pointer(errBuf))
+
+	code := C.px_world_set_player_position(w.ptr, C.uint64_t(playerID), toCVec3(position), errBuf, cErrorBufferSize)
+	if code != 0 {
+		return cError(errBuf, "set physx player position")
+	}
+	return nil
 }
 
 // Raycast 执行 PhysX 射线检测

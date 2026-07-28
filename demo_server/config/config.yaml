@@ -69,3 +69,14 @@ room_server_01:
   physics_ground_plane: true
   default_map_id: "map_001"
   map_collision_path: "configs/maps/map_001/collision.json"
+  physics_hash: "sha256:e1328d5d97e68938b5c55f13a7c04553849cdefcdfed8a32ea288275464d9289"
+  prediction_enabled: true
+  rollback_window_ticks: 60
+  future_input_window_ticks: 8
+  prediction_keyframe_interval: 2
+  position_tolerance: 0.15
+  hard_position_tolerance: 0.5
+  angle_tolerance: 2.0
+  max_input_batch_frames: 8
+  max_input_hold_ticks: 3
+  correction_min_interval_ticks: 2

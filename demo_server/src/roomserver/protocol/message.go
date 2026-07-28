@@ -27,6 +27,12 @@ const (
 	MsgSnapshot uint16 = 6
 	// MsgError 错误响应
 	MsgError uint16 = 7
+	// MsgPlayerInputBatch 批量玩家输入
+	MsgPlayerInputBatch uint16 = 8
+	// MsgInputAck 输入处理确认
+	MsgInputAck uint16 = 9
+	// MsgStateCorrection 权威状态纠偏
+	MsgStateCorrection uint16 = 10
 )
 
 var (
@@ -44,27 +50,43 @@ type Message struct {
 
 // JoinRoomRequest 加入房间请求
 type JoinRoomRequest struct {
-	Token string `json:"token"` // 入房令牌
+	Token             string `json:"token"`              // 入房令牌
+	SyncVersion       int    `json:"sync_version"`       // 同步协议版本
+	PredictionEnabled bool   `json:"prediction_enabled"` // 是否请求预测模式
+	PhysicsHash       string `json:"physics_hash"`       // 客户端物理数据hash
 }
 
 // JoinRoomAck 加入房间响应
 type JoinRoomAck struct {
-	OK      bool    `json:"ok"`       // 是否成功
-	RoomID  string  `json:"room_id"`  // 房间ID
-	Content string  `json:"content"`  // 响应信息
-	Tick    int64   `json:"tick"`     // 当前房间帧号
-	SpawnID string  `json:"spawn_id"` // 出生点ID
-	X       float64 `json:"x"`        // 初始X坐标
-	Y       float64 `json:"y"`        // 初始Y坐标
-	Z       float64 `json:"z"`        // 初始Z坐标
-	Yaw     float64 `json:"yaw"`      // 初始水平视角
-	Pitch   float64 `json:"pitch"`    // 初始垂直视角
+	OK                         bool    `json:"ok"`                           // 是否成功
+	RoomID                     string  `json:"room_id"`                      // 房间ID
+	Content                    string  `json:"content"`                      // 响应信息
+	Tick                       int64   `json:"tick"`                         // 当前房间帧号
+	SpawnID                    string  `json:"spawn_id"`                     // 出生点ID
+	X                          float64 `json:"x"`                            // 初始X坐标
+	Y                          float64 `json:"y"`                            // 初始Y坐标
+	Z                          float64 `json:"z"`                            // 初始Z坐标
+	Yaw                        float64 `json:"yaw"`                          // 初始水平视角
+	Pitch                      float64 `json:"pitch"`                        // 初始垂直视角
+	TickRate                   int     `json:"tick_rate"`                    // 房间逻辑帧率
+	SnapshotRate               int     `json:"snapshot_rate"`                // 快照发送频率
+	ServerTime                 int64   `json:"server_time"`                  // 服务端时间戳
+	SyncMode                   string  `json:"sync_mode"`                    // 实际同步模式
+	MapID                      string  `json:"map_id"`                       // 地图ID
+	PhysicsHash                string  `json:"physics_hash"`                 // 服务端物理数据hash
+	RollbackWindowTicks        int64   `json:"rollback_window_ticks"`        // 回滚历史窗口
+	FutureInputWindowTicks     int64   `json:"future_input_window_ticks"`    // 允许未来输入窗口
+	PredictionKeyframeInterval int64   `json:"prediction_keyframe_interval"` // 预测关键帧间隔
+	PositionTolerance          float64 `json:"position_tolerance"`           // 位置误差阈值
+	HardPositionTolerance      float64 `json:"hard_position_tolerance"`      // 硬纠偏位置阈值
+	AngleTolerance             float64 `json:"angle_tolerance"`              // 角度误差阈值
 }
 
 // Heartbeat 心跳消息
 type Heartbeat struct {
 	ClientTime int64 `json:"client_time"` // 客户端时间戳
 	ServerTime int64 `json:"server_time"` // 服务端时间戳
+	ServerTick int64 `json:"server_tick"` // 服务端房间帧号
 }
 
 // PlayerInput 玩家输入消息
@@ -75,6 +97,34 @@ type PlayerInput struct {
 	Yaw        float64 `json:"yaw"`         // 水平视角
 	Pitch      float64 `json:"pitch"`       // 垂直视角
 	Fire       bool    `json:"fire"`        // 是否开火
+}
+
+// PlayerInputBatch 批量玩家输入消息
+type PlayerInputBatch struct {
+	BaseClientTick         int64              `json:"base_client_tick"`          // 批量起始客户端帧号
+	Frames                 []PlayerInputFrame `json:"frames"`                    // 输入帧列表
+	LastReceivedServerTick int64              `json:"last_received_server_tick"` // 客户端已收到的服务端帧号
+}
+
+// PlayerInputFrame 单帧玩家输入
+type PlayerInputFrame struct {
+	ClientTick     int64                 `json:"client_tick"`               // 客户端帧号
+	MoveX          float64               `json:"move_x"`                    // 左右移动输入
+	MoveZ          float64               `json:"move_z"`                    // 前后移动输入
+	Yaw            float64               `json:"yaw"`                       // 水平视角
+	Pitch          float64               `json:"pitch"`                     // 垂直视角
+	Fire           bool                  `json:"fire"`                      // 是否开火
+	PredictedState *PredictedPlayerState `json:"predicted_state,omitempty"` // 客户端预测状态
+}
+
+// PredictedPlayerState 客户端预测玩家状态
+type PredictedPlayerState struct {
+	X         float64 `json:"x"`                    // X坐标
+	Y         float64 `json:"y"`                    // Y坐标
+	Z         float64 `json:"z"`                    // Z坐标
+	Yaw       float64 `json:"yaw"`                  // 水平视角
+	Pitch     float64 `json:"pitch"`                // 垂直视角
+	StateHash uint32  `json:"state_hash,omitempty"` // 预测状态hash
 }
 
 // PlayerState 玩家快照状态
@@ -93,6 +143,25 @@ type PlayerState struct {
 type Snapshot struct {
 	ServerTick int64         `json:"server_tick"` // 服务端帧号
 	Players    []PlayerState `json:"players"`     // 可见玩家状态
+}
+
+// InputAck 输入处理确认
+type InputAck struct {
+	ServerTick            int64 `json:"server_tick"`              // 服务端当前帧号
+	LastAcceptedInputTick int64 `json:"last_accepted_input_tick"` // 最后接受的输入帧号
+	LastVerifiedInputTick int64 `json:"last_verified_input_tick"` // 最后校验的输入帧号
+}
+
+// StateCorrection 权威状态纠偏
+type StateCorrection struct {
+	PlayerID              uint64      `json:"player_id"`                // 玩家ID
+	RollbackTick          int64       `json:"rollback_tick"`            // 客户端回滚帧号
+	ServerTick            int64       `json:"server_tick"`              // 服务端当前帧号
+	LastAcceptedInputTick int64       `json:"last_accepted_input_tick"` // 最后接受的输入帧号
+	State                 PlayerState `json:"state"`                    // 权威玩家状态
+	Reason                string      `json:"reason"`                   // 纠偏原因
+	PositionError         float64     `json:"position_error"`           // 位置误差
+	AngleError            float64     `json:"angle_error"`              // 角度误差
 }
 
 // ErrorResponse 错误响应

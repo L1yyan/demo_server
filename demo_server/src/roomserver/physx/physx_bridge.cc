@@ -332,7 +332,7 @@ int px_world_remove_player(px_world* world, uint64_t player_id, char* err, int e
     return 0;
 }
 
-int px_world_move_player(px_world* world, uint64_t player_id, px_vec3 direction, double distance, px_vec3* out_position, int* out_blocked, char* err, int err_len) {
+int px_world_move_player(px_world* world, uint64_t player_id, px_vec3 direction, double distance, double delta_time, px_vec3* out_position, int* out_blocked, char* err, int err_len) {
     if (world == nullptr || out_position == nullptr || out_blocked == nullptr) {
         set_error(err, err_len, "invalid move request");
         return 1;
@@ -342,7 +342,7 @@ int px_world_move_player(px_world* world, uint64_t player_id, px_vec3 direction,
         set_error(err, err_len, "player not found");
         return 1;
     }
-    if (!valid_vec3(direction) || !std::isfinite(distance) || distance < 0) {
+    if (!valid_vec3(direction) || !std::isfinite(distance) || distance < 0 || !std::isfinite(delta_time) || delta_time <= 0) {
         set_error(err, err_len, "invalid move value");
         return 1;
     }
@@ -371,12 +371,42 @@ int px_world_move_player(px_world* world, uint64_t player_id, px_vec3 direction,
     PxTransform next = current;
     next.p += dir * travel;
     actor->setKinematicTarget(next);
-    world->scene->simulate(1.0f / 60.0f);
+    world->scene->simulate(static_cast<PxReal>(delta_time));
     world->scene->fetchResults(true);
     actor->setGlobalPose(next);
 
     *out_position = actor_player_position(actor, iter->second.height);
     *out_blocked = blocked ? 1 : 0;
+    return 0;
+}
+
+int px_world_get_player_position(px_world* world, uint64_t player_id, px_vec3* out_position, char* err, int err_len) {
+    if (world == nullptr || out_position == nullptr) {
+        set_error(err, err_len, "invalid get position request");
+        return 1;
+    }
+    auto iter = world->players.find(player_id);
+    if (iter == world->players.end() || iter->second.actor == nullptr) {
+        set_error(err, err_len, "player not found");
+        return 1;
+    }
+    *out_position = actor_player_position(iter->second.actor, iter->second.height);
+    return 0;
+}
+
+int px_world_set_player_position(px_world* world, uint64_t player_id, px_vec3 position, char* err, int err_len) {
+    if (world == nullptr || !valid_vec3(position)) {
+        set_error(err, err_len, "invalid set position request");
+        return 1;
+    }
+    auto iter = world->players.find(player_id);
+    if (iter == world->players.end() || iter->second.actor == nullptr) {
+        set_error(err, err_len, "player not found");
+        return 1;
+    }
+    PxTransform next = player_transform(position, iter->second.radius, iter->second.height);
+    iter->second.actor->setKinematicTarget(next);
+    iter->second.actor->setGlobalPose(next);
     return 0;
 }
 

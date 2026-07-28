@@ -1263,7 +1263,40 @@ token, err := protocol.GenerateRoomToken(
 
 6. 客户端应能收到 `MsgSnapshot`。
 
-## 21. 当前第一版限制
+## 21. 客户端预测和服务端权威纠偏
+
+当前 roomserver 已支持第一版预测同步协议：
+
+```text
+MsgPlayerInputBatch = 8
+MsgInputAck = 9
+MsgStateCorrection = 10
+```
+
+入房时客户端可在 `JoinRoomRequest` 中声明：
+
+```json
+{"sync_version":1,"prediction_enabled":true,"physics_hash":"sha256:..."}
+```
+
+服务端会在 `JoinRoomAck` 中下发 `tick_rate`、`snapshot_rate`、`server_time`、`sync_mode`、`map_id`、`physics_hash`、回滚窗口和误差阈值。只有 `sync_mode` 返回 `prediction_authoritative` 时，客户端才应启用本地预测；否则按旧的 `snapshot_only` 模式同步。
+
+服务端处理原则：
+
+- 只信任客户端输入，不信任客户端坐标。
+- 每 tick 按输入帧推进权威状态。
+- 保存最近 `rollback_window_ticks` 的玩家权威历史。
+- 对客户端上报的关键帧预测状态做位置和角度误差校验。
+- 超阈值时发送 `StateCorrection`，由客户端回滚重放。
+- 迟到太久的输入不会改写服务端历史。
+
+客户端接入细节已拆到：
+
+```text
+src/roomserver/CLIENT_PREDICTION_ROLLBACK.md
+```
+
+## 22. 当前第一版限制
 
 当前代码只是骨架，有这些限制：
 
@@ -1279,7 +1312,7 @@ token, err := protocol.GenerateRoomToken(
 - 没有房间空闲销毁。
 - 没有 token nonce 一次性消费。
 
-## 21. 后续推荐开发顺序
+## 23. 后续推荐开发顺序
 
 建议按下面顺序继续做，避免一次性铺太大：
 
@@ -1294,7 +1327,7 @@ token, err := protocol.GenerateRoomToken(
 9. 扩展地图 mesh、trigger 区域和 PhysX raycast 命中结算。
 10. 实现武器、伤害、死亡、结算。
 
-## 22. 一句话总结
+## 24. 一句话总结
 
 当前 roomserver 的核心链路是：
 

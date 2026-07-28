@@ -27,6 +27,7 @@ type MovePlayerRequest struct {
 	PlayerID  uint64  // 玩家ID
 	Direction Vector3 // 移动方向
 	Distance  float64 // 移动距离
+	DeltaTime float64 // 当前物理步长
 }
 
 // MovePlayerResult 玩家移动物理结果
@@ -64,6 +65,8 @@ type PhysicsWorld interface {
 	AddPlayer(playerID uint64, position Vector3) error
 	RemovePlayer(playerID uint64) error
 	MovePlayer(MovePlayerRequest) (MovePlayerResult, error)
+	GetPlayerPosition(playerID uint64) (Vector3, error)
+	SetPlayerPosition(playerID uint64, position Vector3) error
 	Raycast(RaycastRequest) (RaycastHit, error)
 	BatchRaycast([]RaycastRequest) ([]RaycastHit, error)
 	SpawnPoints() []SpawnPoint
@@ -155,6 +158,37 @@ func (w *SimplePhysicsWorld) MovePlayer(req MovePlayerRequest) (MovePlayerResult
 	blocked := next.X != position.X+req.Direction.X*req.Distance || next.Z != position.Z+req.Direction.Z*req.Distance
 	w.players[req.PlayerID] = next
 	return MovePlayerResult{Position: next, Blocked: blocked}, nil
+}
+
+// GetPlayerPosition 读取玩家当前物理位置
+func (w *SimplePhysicsWorld) GetPlayerPosition(playerID uint64) (Vector3, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return Vector3{}, ErrPhysicsWorldClosed
+	}
+	position, exists := w.players[playerID]
+	if !exists {
+		return Vector3{}, ErrPhysicsPlayerNotFound
+	}
+	return position, nil
+}
+
+// SetPlayerPosition 设置玩家当前物理位置
+func (w *SimplePhysicsWorld) SetPlayerPosition(playerID uint64, position Vector3) error {
+	if playerID == 0 || !vectorFinite(position) {
+		return ErrInvalidPhysicsRequest
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return ErrPhysicsWorldClosed
+	}
+	if _, exists := w.players[playerID]; !exists {
+		return ErrPhysicsPlayerNotFound
+	}
+	w.players[playerID] = position
+	return nil
 }
 
 // Raycast 执行单条射线检测

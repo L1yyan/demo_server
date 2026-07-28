@@ -57,10 +57,12 @@ func buildMovePlayerRequest(playerID uint64, input authoritativeInput, tickRate 
 	if vectorLength(move) == 0 {
 		return MovePlayerRequest{PlayerID: playerID, Direction: move}, true
 	}
+	deltaTime := 1 / float64(tickRate)
 	return MovePlayerRequest{
 		PlayerID:  playerID,
 		Direction: move,
-		Distance:  defaultPlayerMoveSpeed / float64(tickRate),
+		Distance:  defaultPlayerMoveSpeed * deltaTime,
+		DeltaTime: deltaTime,
 	}, true
 }
 

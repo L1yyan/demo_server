@@ -38,7 +38,19 @@ func (s *Server) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	manager := logic.NewRoomManager(ctx, s.cfg.MaxRooms, s.cfg.MaxPlayersPerRoom, s.cfg.TickRate, s.cfg.SnapshotRate, logic.NewSimpleAOIFilter(), physicsFactory)
+	syncConfig := logic.SyncConfig{
+		PredictionEnabled:          s.cfg.PredictionEnabled,
+		RollbackWindowTicks:        s.cfg.RollbackWindowTicks,
+		FutureInputWindowTicks:     s.cfg.FutureInputWindowTicks,
+		PredictionKeyframeInterval: s.cfg.PredictionKeyframeInterval,
+		PositionTolerance:          s.cfg.PositionTolerance,
+		HardPositionTolerance:      s.cfg.HardPositionTolerance,
+		AngleTolerance:             s.cfg.AngleTolerance,
+		MaxInputBatchFrames:        s.cfg.MaxInputBatchFrames,
+		MaxInputHoldTicks:          s.cfg.MaxInputHoldTicks,
+		CorrectionMinIntervalTicks: s.cfg.CorrectionMinIntervalTicks,
+	}
+	manager := logic.NewRoomManagerWithSync(ctx, s.cfg.MaxRooms, s.cfg.MaxPlayersPerRoom, s.cfg.TickRate, s.cfg.SnapshotRate, syncConfig, s.cfg.DefaultMapID, s.cfg.PhysicsHash, logic.NewSimpleAOIFilter(), physicsFactory)
 	listener, err := kcp.ListenWithOptions(s.cfg.ListenAddr, nil, 10, 3)
 	if err != nil {
 		return fmt.Errorf("listen kcp: %w", err)
@@ -77,9 +89,11 @@ func (s *Server) HandleMessage(ctx context.Context, session *Session, message pr
 	case protocol.MsgJoinRoom:
 		s.handleJoinRoom(ctx, session, message)
 	case protocol.MsgHeartbeat:
-		s.handleHeartbeat(session)
+		s.handleHeartbeat(session, message)
 	case protocol.MsgPlayerInput:
 		s.handlePlayerInput(ctx, session, message)
+	case protocol.MsgPlayerInputBatch:
+		s.handlePlayerInputBatch(ctx, session, message)
 	default:
 		s.sendError(session, "unknown_message", "unknown message type")
 	}
@@ -165,7 +179,14 @@ func (s *Server) handleJoinRoom(ctx context.Context, session *Session, message p
 	}
 
 	session.SetPlayer(claims.PlayerID, claims.RoomID)
-	player := &logic.Player{ID: claims.PlayerID, RoomID: claims.RoomID, Session: session}
+	player := &logic.Player{
+		ID:                claims.PlayerID,
+		RoomID:            claims.RoomID,
+		Session:           session,
+		SyncVersion:       request.SyncVersion,
+		PredictionEnabled: request.PredictionEnabled,
+		PhysicsHash:       request.PhysicsHash,
+	}
 	if err := s.manager.JoinRoom(claims.RoomID, player); err != nil {
 		s.sendError(session, "join_failed", err.Error())
 		return
@@ -173,8 +194,13 @@ func (s *Server) handleJoinRoom(ctx context.Context, session *Session, message p
 }
 
 // handleHeartbeat 处理心跳
-func (s *Server) handleHeartbeat(session *Session) {
-	message, err := protocol.NewJSONMessage(protocol.MsgHeartbeatAck, protocol.Heartbeat{ServerTime: time.Now().UnixMilli()})
+func (s *Server) handleHeartbeat(session *Session, requestMessage protocol.Message) {
+	request, _ := protocol.DecodeJSON[protocol.Heartbeat](requestMessage)
+	serverTick := int64(0)
+	if s.manager != nil && session.PlayerID() != 0 {
+		serverTick = s.manager.RoomTick(session.PlayerID())
+	}
+	message, err := protocol.NewJSONMessage(protocol.MsgHeartbeatAck, protocol.Heartbeat{ClientTime: request.ClientTime, ServerTime: time.Now().UnixMilli(), ServerTick: serverTick})
 	if err != nil {
 		return
 	}
@@ -194,6 +220,27 @@ func (s *Server) handlePlayerInput(ctx context.Context, session *Session, messag
 	}
 	if err := s.manager.PushInput(session.PlayerID(), input); err != nil {
 		glog.Warn(ctx, "push player input failed", glog.String("session_id", session.ID()), glog.Uint64("player_id", session.PlayerID()), glog.Err(err))
+		s.sendError(session, "input_failed", err.Error())
+	}
+}
+
+// handlePlayerInputBatch 处理批量玩家输入
+func (s *Server) handlePlayerInputBatch(ctx context.Context, session *Session, message protocol.Message) {
+	if session.PlayerID() == 0 {
+		s.sendError(session, "not_joined", "player not joined room")
+		return
+	}
+	batch, err := protocol.DecodeJSON[protocol.PlayerInputBatch](message)
+	if err != nil {
+		s.sendError(session, "bad_request", "invalid player input batch")
+		return
+	}
+	if len(batch.Frames) == 0 || len(batch.Frames) > s.cfg.MaxInputBatchFrames {
+		s.sendError(session, "bad_request", "invalid input batch frame count")
+		return
+	}
+	if err := s.manager.PushInputBatch(session.PlayerID(), batch); err != nil {
+		glog.Warn(ctx, "push player input batch failed", glog.String("session_id", session.ID()), glog.Uint64("player_id", session.PlayerID()), glog.Err(err))
 		s.sendError(session, "input_failed", err.Error())
 	}
 }

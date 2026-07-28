@@ -23,6 +23,26 @@ func TestSimplePhysicsWorldMovePlayer(t *testing.T) {
 }
 
 // TestSimplePhysicsWorldInvalidRequest 验证 simple 后端拒绝非法物理请求
+func TestSimplePhysicsSetGetPlayerPosition(t *testing.T) {
+	world := NewSimplePhysicsWorld()
+	defer world.Close()
+
+	if err := world.AddPlayer(1, Vector3{}); err != nil {
+		t.Fatalf("add player: %v", err)
+	}
+	if err := world.SetPlayerPosition(1, Vector3{X: 3, Y: 0.5, Z: -2}); err != nil {
+		t.Fatalf("set player position: %v", err)
+	}
+	position, err := world.GetPlayerPosition(1)
+	if err != nil {
+		t.Fatalf("get player position: %v", err)
+	}
+	if position.X != 3 || position.Y != 0.5 || position.Z != -2 {
+		t.Fatalf("unexpected player position: %+v", position)
+	}
+}
+
+// TestSimplePhysicsWorldInvalidRequest 验证 simple 后端拒绝非法物理请求
 func TestSimplePhysicsWorldInvalidRequest(t *testing.T) {
 	world := NewSimplePhysicsWorld()
 	defer world.Close()

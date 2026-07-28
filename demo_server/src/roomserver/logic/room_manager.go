@@ -25,17 +25,31 @@ type RoomManager struct {
 	maxPlayersPerRoom int
 	tickRate          int
 	snapshotRate      int
+	syncConfig        SyncConfig
+	mapID             string
+	physicsHash       string
 	aoi               AOIFilter
 	physicsFactory    PhysicsWorldFactory
 }
 
 // NewRoomManager 创建房间管理器
 func NewRoomManager(ctx context.Context, maxRooms int, maxPlayersPerRoom int, tickRate int, snapshotRate int, aoi AOIFilter, physicsFactory PhysicsWorldFactory) *RoomManager {
+	return NewRoomManagerWithSync(ctx, maxRooms, maxPlayersPerRoom, tickRate, snapshotRate, SyncConfig{}, "", "", aoi, physicsFactory)
+}
+
+// NewRoomManagerWithSync 创建带同步配置的房间管理器
+func NewRoomManagerWithSync(ctx context.Context, maxRooms int, maxPlayersPerRoom int, tickRate int, snapshotRate int, syncConfig SyncConfig, mapID string, physicsHash string, aoi AOIFilter, physicsFactory PhysicsWorldFactory) *RoomManager {
 	if maxRooms <= 0 {
 		maxRooms = 1000
 	}
 	if maxPlayersPerRoom <= 0 {
 		maxPlayersPerRoom = 2
+	}
+	if tickRate <= 0 {
+		tickRate = 20
+	}
+	if snapshotRate <= 0 || snapshotRate > tickRate {
+		snapshotRate = tickRate
 	}
 	if physicsFactory == nil {
 		physicsFactory = NewSimplePhysicsWorldFactory()
@@ -48,6 +62,9 @@ func NewRoomManager(ctx context.Context, maxRooms int, maxPlayersPerRoom int, ti
 		maxPlayersPerRoom: maxPlayersPerRoom,
 		tickRate:          tickRate,
 		snapshotRate:      snapshotRate,
+		syncConfig:        syncConfig.Normalize(tickRate),
+		mapID:             mapID,
+		physicsHash:       physicsHash,
 		aoi:               aoi,
 		physicsFactory:    physicsFactory,
 	}
@@ -89,17 +106,35 @@ func (m *RoomManager) LeaveRoom(playerID uint64) {
 
 // PushInput 投递玩家输入
 func (m *RoomManager) PushInput(playerID uint64, input protocol.PlayerInput) error {
-	m.mu.RLock()
-	roomID, exists := m.playerRooms[playerID]
-	room := m.rooms[roomID]
-	m.mu.RUnlock()
-	if !exists || room == nil {
-		return errors.New("player room not found")
+	room, err := m.playerRoom(playerID)
+	if err != nil {
+		return err
 	}
 	if ok := room.PushInput(playerID, input); !ok {
 		return ErrRoomEventQueueFull
 	}
 	return nil
+}
+
+// PushInputBatch 投递玩家批量输入
+func (m *RoomManager) PushInputBatch(playerID uint64, batch protocol.PlayerInputBatch) error {
+	room, err := m.playerRoom(playerID)
+	if err != nil {
+		return err
+	}
+	if ok := room.PushInputBatch(playerID, batch); !ok {
+		return ErrRoomEventQueueFull
+	}
+	return nil
+}
+
+// RoomTick 查询玩家所在房间当前帧号
+func (m *RoomManager) RoomTick(playerID uint64) int64 {
+	room, err := m.playerRoom(playerID)
+	if err != nil {
+		return 0
+	}
+	return room.Tick()
 }
 
 // Stop 停止所有房间
@@ -114,6 +149,18 @@ func (m *RoomManager) Stop() {
 	for _, room := range rooms {
 		room.Stop()
 	}
+}
+
+// playerRoom 查询玩家所在房间
+func (m *RoomManager) playerRoom(playerID uint64) (*Room, error) {
+	m.mu.RLock()
+	roomID, exists := m.playerRooms[playerID]
+	room := m.rooms[roomID]
+	m.mu.RUnlock()
+	if !exists || room == nil {
+		return nil, errors.New("player room not found")
+	}
+	return room, nil
 }
 
 // getOrCreateRoom 获取或创建房间
@@ -139,7 +186,7 @@ func (m *RoomManager) getOrCreateRoom(roomID string) (*Room, error) {
 	if err != nil {
 		return nil, err
 	}
-	room = NewRoom(roomID, m.maxPlayersPerRoom, m.tickRate, m.snapshotRate, m.aoi, physicsWorld)
+	room = NewRoomWithSync(roomID, m.maxPlayersPerRoom, m.tickRate, m.snapshotRate, m.aoi, physicsWorld, m.syncConfig, m.mapID, m.physicsHash)
 	room.Start(m.ctx)
 	m.rooms[roomID] = room
 	return room, nil
