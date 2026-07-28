@@ -1,8 +1,8 @@
 # Roomserver 全链路说明
 
-本文档说明当前 `src/roomserver` 第一版骨架的完整链路，从玩家准备接入开始，一直到入房、输入、房间 tick、状态快照和断线清理。
+本文档说明当前 `src/roomserver` 的完整链路，从玩家准备接入开始，一直到入房、输入、房间 tick、客户端预测校验、状态快照、纠偏和断线清理。
 
-当前 roomserver 还是第一版骨架，目标是先把网络、协议、token、房间、tick、AOI、物理接口这些边界搭起来。它还不是完整 FPS 战斗服，也还没有接入 matchserver、logicserver、真实 PhysX 和完整玩法。
+当前 roomserver 已接入 KCP、room token、房间 tick、AOI、PhysX 地图碰撞、出生点同步、客户端预测回滚协议和服务端权威纠偏。它还不是完整 FPS 战斗服，尚未接入 matchserver、logicserver 和完整玩法结算。
 
 ## 1. 当前代码包含什么
 
@@ -21,6 +21,7 @@ src/roomserver
 │   ├── room_manager.go      # 房间管理器
 │   ├── room.go              # 单房间 tick 循环
 │   ├── player.go            # 玩家状态和 session 抽象
+│   ├── sync.go              # 同步模式、回滚窗口和纠偏配置
 │   ├── aoi.go               # AOI 可见性过滤接口和简化实现
 │   └── physics.go           # 物理接口和简化实现
 └── protocol
@@ -48,9 +49,26 @@ room_server_01:
   read_timeout: "10s"
   write_queue_size: 128
   max_payload_size: 65536
+  physics_backend: "physx"
+  player_capsule_radius: 0.35
+  player_capsule_height: 1.8
+  physics_ground_plane: true
+  default_map_id: "map_001"
+  map_collision_path: "configs/maps/map_001/collision.json"
+  physics_hash: "sha256:e1328d5d97e68938b5c55f13a7c04553849cdefcdfed8a32ea288275464d9289"
+  prediction_enabled: true
+  rollback_window_ticks: 60
+  future_input_window_ticks: 8
+  prediction_keyframe_interval: 2
+  position_tolerance: 0.15
+  hard_position_tolerance: 0.5
+  angle_tolerance: 2.0
+  max_input_batch_frames: 8
+  max_input_hold_ticks: 3
+  correction_min_interval_ticks: 2
 ```
 
-注意：当前代码还没有接统一 YAML 加载器，`cmd/main.go` 里先使用 `roomconfig.DefaultConfig()` 启动。
+注意：`cmd/main.go` 当前仍使用 `roomconfig.DefaultConfig()` 启动，`config/config.yaml` 已补齐 roomserver 配置示例，后续需要接入统一 YAML 加载器。
 
 ## 2. 服务启动链路
 
@@ -88,7 +106,7 @@ main
 
 ```text
 Server.Start
-  -> logic.NewRoomManager
+  -> logic.NewRoomManagerWithSync
   -> kcp.ListenWithOptions
   -> go acceptLoop
 ```
@@ -242,13 +260,16 @@ bytes payload
 当前消息类型：
 
 ```go
-MsgJoinRoom      = 1 // 请求加入房间
-MsgJoinRoomAck   = 2 // 加入房间响应
-MsgHeartbeat     = 3 // 心跳请求
-MsgHeartbeatAck  = 4 // 心跳响应
-MsgPlayerInput   = 5 // 玩家输入
-MsgSnapshot      = 6 // 状态快照
-MsgError         = 7 // 错误响应
+MsgJoinRoom         = 1  // 请求加入房间
+MsgJoinRoomAck      = 2  // 加入房间响应
+MsgHeartbeat        = 3  // 心跳请求
+MsgHeartbeatAck     = 4  // 心跳响应
+MsgPlayerInput      = 5  // 单帧玩家输入
+MsgSnapshot         = 6  // 状态快照
+MsgError            = 7  // 错误响应
+MsgPlayerInputBatch = 8  // 批量玩家输入
+MsgInputAck         = 9  // 输入处理确认
+MsgStateCorrection  = 10 // 权威状态纠偏
 ```
 
 ## 7. 玩家请求入房
@@ -259,9 +280,14 @@ payload 示例：
 
 ```json
 {
-  "token": "room token 字符串"
+  "token": "room token 字符串",
+  "sync_version": 1,
+  "prediction_enabled": true,
+  "physics_hash": "sha256:e1328d5d97e68938b5c55f13a7c04553849cdefcdfed8a32ea288275464d9289"
 }
 ```
+
+旧客户端只传 `token` 也能入房，但服务端会按 `snapshot_only` 模式处理，不启用客户端预测。
 
 服务端处理入口：
 
@@ -276,7 +302,8 @@ Server.HandleMessage
 2. token 是否能通过 `protocol.ParseRoomToken` 校验。
 3. token 的 `server_id` 是否等于当前 roomserver 的 `cfg.ServerID`。
 4. token 里是否有合法的 `room_id` 和 `player_id`。
-5. 调用 `RoomManager.JoinRoom` 加入房间。
+5. 根据 `sync_version`、`prediction_enabled` 和 `physics_hash` 判断实际同步模式。
+6. 调用 `RoomManager.JoinRoom` 加入房间。
 
 简化链路：
 
@@ -380,7 +407,19 @@ room.loop
   "y": 0.1,
   "z": 0,
   "yaw": 0,
-  "pitch": 0
+  "pitch": 0,
+  "tick_rate": 20,
+  "snapshot_rate": 10,
+  "server_time": 1785139200000,
+  "sync_mode": "prediction_authoritative",
+  "map_id": "map_001",
+  "physics_hash": "sha256:e1328d5d97e68938b5c55f13a7c04553849cdefcdfed8a32ea288275464d9289",
+  "rollback_window_ticks": 60,
+  "future_input_window_ticks": 8,
+  "prediction_keyframe_interval": 2,
+  "position_tolerance": 0.15,
+  "hard_position_tolerance": 0.5,
+  "angle_tolerance": 2
 }
 ```
 
@@ -413,7 +452,7 @@ Server.HandleMessage
 
 ## 11. 玩家输入链路
 
-玩家入房后，可以发送 `MsgPlayerInput`。
+玩家入房后，可以发送 `MsgPlayerInput`。支持预测回滚的新客户端推荐发送 `MsgPlayerInputBatch`，把多帧输入和关键帧预测状态一起上报。
 
 payload 示例：
 
@@ -455,6 +494,35 @@ Server.HandleMessage
   -> room.events
 ```
 
+批量输入 payload 示例：
+
+```json
+{
+  "base_client_tick": 101,
+  "last_received_server_tick": 95,
+  "frames": [
+    {
+      "client_tick": 101,
+      "move_x": 0,
+      "move_z": 1,
+      "yaw": 0,
+      "pitch": 0,
+      "fire": false,
+      "predicted_state": {
+        "x": -4,
+        "y": 0.1,
+        "z": 0.2,
+        "yaw": 0,
+        "pitch": 0,
+        "state_hash": 0
+      }
+    }
+  ]
+}
+```
+
+批量输入会经过 `Server.handlePlayerInputBatch -> RoomManager.PushInputBatch -> Room.PushInputBatch -> room.events`。服务端只信任输入方向、视角和开火意图，客户端预测坐标只用于和服务端权威历史做误差校验。
+
 注意：service 层只负责解析和投递，不直接改玩家坐标。这符合分层要求。
 
 ## 12. 房间 tick 循环
@@ -493,16 +561,20 @@ for {
 }
 ```
 
-当前第一版输入处理在 `handleInput` 中是非常简化的：
+当前输入处理分两类：
+
+- 单帧输入：兼容旧客户端，直接投递 `MsgPlayerInput`。
+- 批量输入：预测客户端使用，服务端按 tick 缓存输入帧并在房间更新中按顺序应用。
+
+移动推进由服务端权威执行，核心逻辑是根据输入方向、tick 步长和移动速度调用 `PhysicsWorld.MovePlayer`，再把 PhysX 修正后的坐标写回玩家状态。简化表达如下：
 
 ```text
-player.X += input.MoveX * 0.2
-player.Z += input.MoveZ * 0.2
+input -> normalize move direction -> PhysicsWorld.MovePlayer -> update authoritative Player
 player.Yaw = input.Yaw
 player.Pitch = input.Pitch
 ```
 
-如果 `input.Fire == true`，会调用一次 `PhysicsWorld.Raycast`，但当前 `SimplePhysicsWorld` 只是占位，不会真实命中。
+如果 `input.Fire == true`，会调用 `PhysicsWorld.Raycast`。当前已默认使用 PhysX 后端，地图碰撞来自 `configs/maps/map_001/collision.json`。
 
 后续真实玩法要在这里扩展：
 
@@ -534,20 +606,23 @@ intervalTicks = tickRate / snapshotRate
 到了时间就调用：
 
 ```text
+broadcastAcks
 broadcastSnapshots
 ```
 
 广播流程：
 
-1. 收集当前房间所有玩家。
-2. 对每个玩家单独计算 AOI 可见对象。
-3. 生成该玩家自己的 snapshot。
-4. 通过玩家的 session 发送 `MsgSnapshot`。
+1. 先给预测客户端发送 `MsgInputAck`，确认服务端已接受和已校验的输入 tick。
+2. 收集当前房间所有玩家。
+3. 对每个玩家单独计算 AOI 可见对象。
+4. 生成该玩家自己的 snapshot。
+5. 通过玩家的 session 发送 `MsgSnapshot`。
 
 简化链路：
 
 ```text
 Room.update
+  -> broadcastAcks
   -> broadcastSnapshots
   -> AOIFilter.FilterVisible
   -> protocol.NewJSONMessage(MsgSnapshot, ...)
@@ -577,6 +652,18 @@ snapshot payload 示例：
 ```
 
 当前 snapshot 至少会包含玩家自己，另外再包含 AOI 判断可见的其他玩家。
+
+`InputAck` payload 示例：
+
+```json
+{
+  "server_tick": 120,
+  "last_accepted_input_tick": 118,
+  "last_verified_input_tick": 116
+}
+```
+
+客户端收到后可以删除已确认输入历史，同时保留回滚窗口内仍可能用于重放的输入和预测状态。
 
 ## 14. AOI 当前如何工作
 
@@ -613,6 +700,8 @@ type PhysicsWorld interface {
     AddPlayer(playerID uint64, position Vector3) error
     RemovePlayer(playerID uint64) error
     MovePlayer(MovePlayerRequest) (MovePlayerResult, error)
+    GetPlayerPosition(playerID uint64) (Vector3, error)
+    SetPlayerPosition(playerID uint64, position Vector3) error
     Raycast(RaycastRequest) (RaycastHit, error)
     BatchRaycast([]RaycastRequest) ([]RaycastHit, error)
     SpawnPoints() []SpawnPoint
@@ -655,6 +744,7 @@ configs/maps/map_001/collision.json
 - `collision.json` 丢失、格式错误或存在暂不支持的实体 shape 时，PhysX world 创建会失败。
 - 高频 raycast 应优先批量调用 `BatchRaycast`。
 - 玩家移动当前按房间 tick 调用 `MovePlayer`，后续人数增加时可扩展批量移动。
+- 预测纠偏时可通过 `SetPlayerPosition` 把服务端权威坐标同步回物理世界。
 - PhysX 对象生命周期由房间集中管理，玩家加入创建 actor，离房和停房释放 actor/world。
 - Go 状态和 PhysX 状态的同步点在房间 tick 中。
 
@@ -751,25 +841,25 @@ Room.events
   v
 客户端入房成功
   |
-  | 8. 客户端循环发送 MsgPlayerInput
+  | 8. 客户端循环发送 MsgPlayerInput 或 MsgPlayerInputBatch
   v
-Server.handlePlayerInput
+Server.handlePlayerInput / Server.handlePlayerInputBatch
   |
-  | 9. RoomManager.PushInput
+  | 9. RoomManager.PushInput / RoomManager.PushInputBatch
   v
 Room.events
   |
-  | 10. Room.handleInput 更新简化状态
+  | 10. Room 缓存或应用输入，按 tick 推进服务端权威状态
   |
-  | 11. Room.update 固定 tick
+  | 11. Room.update 固定 tick，校验预测状态并清理历史
   |
-  | 12. Room.broadcastSnapshots
+  | 12. Room.broadcastAcks + Room.broadcastSnapshots
   v
 Session.writeLoop
   |
-  | 13. KCP 发送 MsgSnapshot
+  | 13. KCP 发送 MsgInputAck / MsgSnapshot / MsgStateCorrection
   v
-客户端显示服务端状态
+客户端确认输入、显示服务端状态，必要时回滚重放
 ```
 
 ## 19. 关键调用链参数说明
@@ -807,22 +897,25 @@ main
 
 ```text
 Server.Start(ctx)
-  -> logic.NewRoomManager(ctx, maxRooms, maxPlayersPerRoom, tickRate, snapshotRate, aoi, physics)
+  -> logic.NewRoomManagerWithSync(ctx, maxRooms, maxPlayersPerRoom, tickRate, snapshotRate, syncConfig, mapID, physicsHash, aoi, physicsFactory)
   -> kcp.ListenWithOptions(listenAddr, nil, 10, 3)
   -> listener.SetReadBuffer(4 * 1024 * 1024)
   -> listener.SetWriteBuffer(4 * 1024 * 1024)
   -> go acceptLoop(ctx)
 ```
 
-`logic.NewRoomManager(ctx, maxRooms, maxPlayersPerRoom, tickRate, snapshotRate, aoi, physics)`：
+`logic.NewRoomManagerWithSync(ctx, maxRooms, maxPlayersPerRoom, tickRate, snapshotRate, syncConfig, mapID, physicsHash, aoi, physicsFactory)`：
 
 - `ctx`：房间管理器和房间 loop 共用的生命周期控制。
 - `maxRooms`：当前 roomserver 进程最多允许创建多少房间，防止无限创建房间。
 - `maxPlayersPerRoom`：单个房间最大玩家数，当前玩法目标是 2 人对局。
 - `tickRate`：房间每秒逻辑更新次数，例如 20 表示每 50ms 更新一次。
 - `snapshotRate`：每秒发送快照次数，例如 10 表示每 100ms 发一次快照。
+- `syncConfig`：预测同步配置，包含回滚窗口、未来输入窗口、误差阈值和纠偏间隔。
+- `mapID`：当前房间使用的地图 ID，会在入房响应中下发。
+- `physicsHash`：服务端物理数据 hash，用于和客户端地图碰撞数据做一致性判断。
 - `aoi`：AOI 过滤器。当前传 `logic.NewSimpleAOIFilter()`，用于按距离和视角过滤可见玩家。
-- `physics`：物理世界。当前传 `logic.NewSimplePhysicsWorld()`，只是占位，后续可以替换为 PhysX 实现。
+- `physicsFactory`：物理世界工厂。当前默认按配置创建 PhysX world，每个房间独立一个物理场景。
 
 `kcp.ListenWithOptions(listenAddr, nil, 10, 3)`：
 
@@ -946,6 +1039,7 @@ Server.HandleMessage(ctx, session, message)
   -> handleJoinRoom(ctx, session, message)
   -> handleHeartbeat(session)
   -> handlePlayerInput(ctx, session, message)
+  -> handlePlayerInputBatch(ctx, session, message)
   -> sendError(session, code, content)
 ```
 
@@ -971,6 +1065,12 @@ Server.HandleMessage(ctx, session, message)
 - `ctx`：用于日志记录。
 - `session`：发送输入的客户端连接，必须已经入房并绑定 player_id。
 - `message`：类型必须是 `MsgPlayerInput`，payload 应该是 `PlayerInput` JSON。
+
+`handlePlayerInputBatch(ctx, session, message)`：
+
+- `ctx`：用于日志记录。
+- `session`：发送输入的客户端连接，必须已经入房并绑定 player_id。
+- `message`：类型必须是 `MsgPlayerInputBatch`，payload 应该是 `PlayerInputBatch` JSON。
 
 `sendError(session, code, content)`：
 
@@ -1055,18 +1155,21 @@ RoomManager.JoinRoom(roomID, player)
 
 ```text
 getOrCreateRoom(roomID)
-  -> NewRoom(roomID, maxPlayersPerRoom, tickRate, snapshotRate, aoi, physics)
+  -> physicsFactory.NewWorld(roomID)
+  -> NewRoomWithSync(roomID, maxPlayersPerRoom, tickRate, snapshotRate, aoi, physicsWorld, syncConfig, mapID, physicsHash)
   -> room.Start(ctx)
 ```
 
-`NewRoom(roomID, maxPlayersPerRoom, tickRate, snapshotRate, aoi, physics)`：
+`NewRoomWithSync(roomID, maxPlayersPerRoom, tickRate, snapshotRate, aoi, physicsWorld, syncConfig, mapID, physicsHash)`：
 
 - `roomID`：房间唯一 ID。
 - `maxPlayersPerRoom`：该房间最大人数，当前默认 2。
 - `tickRate`：房间每秒逻辑更新次数。
 - `snapshotRate`：房间每秒快照发送次数。
 - `aoi`：AOI 过滤器，用于决定每个玩家能看到谁。
-- `physics`：物理世界接口，用于后续 raycast、碰撞等。
+- `physicsWorld`：该房间独立的物理世界，用于移动碰撞、raycast 和物理位置同步。
+- `syncConfig`：该房间使用的预测同步配置。
+- `mapID` / `physicsHash`：入房响应下发给客户端，用于确定地图和物理数据一致性。
 
 `room.Start(ctx)`：
 
@@ -1080,7 +1183,8 @@ room.loop(ctx)
   -> handleEvent(ctx, event)
   -> handleJoin(ctx, event.player)
   -> handleLeave(ctx, event.playerID)
-  -> handleInput(event.playerID, event.input)
+  -> handleInput(ctx, event.playerID, event.input)
+  -> handleInputBatch(ctx, event.playerID, event.inputBatch)
 ```
 
 `room.loop(ctx)`：
@@ -1105,11 +1209,17 @@ room.loop(ctx)
 - `event.playerID`：要离开房间的玩家 ID。
 - 这个函数会从房间 `players` map 删除玩家。
 
-`handleInput(event.playerID, event.input)`：
+`handleInput(ctx, event.playerID, event.input)`：
 
 - `event.playerID`：输入属于哪个玩家。
 - `event.input`：玩家输入，包括移动方向、视角、是否开火。
-- 当前只做简化移动和占位 raycast。
+- 兼容旧客户端的单帧输入，会立即转换成一帧同步输入并应用。
+
+`handleInputBatch(ctx, event.playerID, event.inputBatch)`：
+
+- `event.playerID`：输入属于哪个玩家。
+- `event.inputBatch`：批量输入，包含多帧客户端输入和可选预测状态。
+- 服务端会校验批量大小、输入 tick 窗口和玩家同步模式，再缓存到玩家同步状态中等待 tick 应用。
 
 ### 19.10 玩家输入调用链
 
@@ -1118,6 +1228,11 @@ handlePlayerInput(ctx, session, message)
   -> protocol.DecodeJSON[PlayerInput](message)
   -> manager.PushInput(session.PlayerID(), input)
   -> room.PushInput(playerID, input)
+
+handlePlayerInputBatch(ctx, session, message)
+  -> protocol.DecodeJSON[PlayerInputBatch](message)
+  -> manager.PushInputBatch(session.PlayerID(), batch)
+  -> room.PushInputBatch(playerID, batch)
 ```
 
 `protocol.DecodeJSON[PlayerInput](message)`：
@@ -1137,10 +1252,17 @@ handlePlayerInput(ctx, session, message)
 - `input`：玩家输入。
 - 它会把输入封装成 `roomEventInput` 写入房间事件队列。
 
+`room.PushInputBatch(playerID, batch)`：
+
+- `playerID`：玩家 ID。
+- `batch`：批量输入，最多包含 `max_input_batch_frames` 帧。
+- 它会把输入封装成 `roomEventInputBatch` 写入房间事件队列。
+
 ### 19.11 Snapshot 发送调用链
 
 ```text
 Room.update(ctx)
+  -> broadcastAcks(ctx)
   -> broadcastSnapshots(ctx)
   -> aoi.FilterVisible(player, players)
   -> protocol.NewJSONMessage(MsgSnapshot, snapshot)
@@ -1152,7 +1274,12 @@ Room.update(ctx)
 
 - `ctx`：日志 context。
 - 每个 tick 调用一次。
-- 它会递增 `r.tick`，并判断是否到了发送 snapshot 的时机。
+- 它会递增 `r.tick`，应用当前 tick 可用输入，保存权威历史，校验客户端预测状态，清理超出回滚窗口的同步历史，并判断是否到了发送 ack 和 snapshot 的时机。
+
+`broadcastAcks(ctx)`：
+
+- `ctx`：日志 context。
+- 给每个预测同步玩家发送 `MsgInputAck`，包含服务端当前 tick、最后接受输入 tick 和最后校验输入 tick。
 
 `broadcastSnapshots(ctx)`：
 
@@ -1256,12 +1383,12 @@ token, err := protocol.GenerateRoomToken(
 4. 发送 `MsgJoinRoom`：
 
 ```json
-{"token":"上面生成的 token"}
+{"token":"上面生成的 token","sync_version":1,"prediction_enabled":true,"physics_hash":"sha256:..."}
 ```
 
-5. 收到 `MsgJoinRoomAck` 后，循环发送 `MsgPlayerInput`。
+5. 收到 `MsgJoinRoomAck` 后，旧客户端循环发送 `MsgPlayerInput`，预测客户端循环发送 `MsgPlayerInputBatch`。
 
-6. 客户端应能收到 `MsgSnapshot`。
+6. 客户端应能收到 `MsgInputAck` 和 `MsgSnapshot`；预测误差超阈值时还会收到 `MsgStateCorrection`。
 
 ## 21. 客户端预测和服务端权威纠偏
 
@@ -1296,19 +1423,18 @@ MsgStateCorrection = 10
 src/roomserver/CLIENT_PREDICTION_ROLLBACK.md
 ```
 
-## 22. 当前第一版限制
+## 22. 当前限制
 
-当前代码只是骨架，有这些限制：
+当前代码还有这些限制：
 
 - 没有接 matchserver。
 - 没有接 logicserver。
-- 没有统一读取 `config/config.yaml`。
+- 没有统一读取 `config/config.yaml`，当前进程入口仍使用默认配置启动。
 - JSON payload 只是第一版调试方案。
 - 没有完整客户端测试工具。
 - 已接入 `map_001` 的 box 静态地图碰撞，但还没有 mesh、sphere、capsule 和 trigger 区域。
-- 没有真实 PhysX。
 - 没有真实武器、伤害、死亡、结算逻辑。
-- 没有客户端预测、插值、回滚和延迟补偿。
+- 已有服务端侧预测校验和纠偏协议，但客户端预测、插值、回滚和重放仍需要客户端实现。
 - 没有房间空闲销毁。
 - 没有 token nonce 一次性消费。
 
@@ -1317,20 +1443,21 @@ src/roomserver/CLIENT_PREDICTION_ROLLBACK.md
 建议按下面顺序继续做，避免一次性铺太大：
 
 1. 写一个最小 KCP 测试客户端。
-2. 跑通 `JoinRoom -> JoinRoomAck -> PlayerInput -> Snapshot`。
+2. 跑通 `JoinRoom -> JoinRoomAck -> PlayerInputBatch -> InputAck -> Snapshot`。
 3. 把 roomserver 配置接入统一 YAML 加载。
 4. 增加房间空闲关闭和玩家重复登录处理。
 5. 把 JSON payload 替换或兼容 protobuf。
 6. 实现 matchserver 的房间分配和 room token 签发。
 7. logicserver 调 matchserver，客户端从 logic 拿 room token。
-8. 加入基础移动规则和服务端校验。
-9. 扩展地图 mesh、trigger 区域和 PhysX raycast 命中结算。
-10. 实现武器、伤害、死亡、结算。
+8. 客户端接入预测、插值、回滚和重放。
+9. 加入基础移动规则和更完整的服务端校验。
+10. 扩展地图 mesh、trigger 区域和 PhysX raycast 命中结算。
+11. 实现武器、伤害、死亡、结算。
 
 ## 24. 一句话总结
 
 当前 roomserver 的核心链路是：
 
 ```text
-KCP 连接进入 Session，Session 读到业务消息后交给 Server，Server 校验 token 并调用 RoomManager，RoomManager 把玩家和输入投递给 Room，Room 在自己的 tick goroutine 中更新状态，再按 AOI 生成 Snapshot，通过 Session 写回客户端。
+KCP 连接进入 Session，Session 读到业务消息后交给 Server，Server 校验 token 和同步能力并调用 RoomManager，RoomManager 把玩家和输入投递给 Room，Room 在自己的 tick goroutine 中用 PhysX 推进权威状态、校验客户端预测、必要时发送纠偏，再按 AOI 生成 Ack 和 Snapshot，通过 Session 写回客户端。
 ```
