@@ -2,7 +2,7 @@
 
 本文档说明当前 `src/roomserver` 的完整链路，从玩家准备接入开始，一直到入房、输入、房间 tick、客户端预测校验、状态快照、纠偏和断线清理。
 
-当前 roomserver 已接入 KCP、room token、房间 tick、AOI、PhysX 地图碰撞、出生点同步、客户端预测回滚协议和服务端权威纠偏。它还不是完整 FPS 战斗服，尚未接入 matchserver、logicserver 和完整玩法结算。
+当前 roomserver 已接入 KCP、room token、logicserver 到 matchserver 再到 roomserver 的入房链路、房间 tick、AOI、PhysX 地图碰撞、出生点同步、客户端预测回滚协议和服务端权威纠偏。它还不是完整 FPS 战斗服，尚未接入完整玩法结算。
 
 ## 1. 当前代码包含什么
 
@@ -125,7 +125,7 @@ Server.Start
   -> 客户端用 room token 连接 roomserver
 ```
 
-当前第一版还没有 matchserver，所以 room token 可以先用 `protocol.GenerateRoomToken` 临时生成，用来测试 roomserver 入房链路。
+当前已经可以从 logicserver 请求匹配，由 matchserver 分配 roomserver 和 room_id 并签发 room token。`protocol.GenerateRoomToken` 仍可用于本地或单元测试时临时生成 room token。
 
 room token 的声明结构在 `src/roomserver/protocol/token.go`：
 
@@ -349,7 +349,7 @@ NewRoom
   -> 保存到 rooms map
 ```
 
-当前第一版是“入房时自动创建房间”。后续接 matchserver 后，更合理的方式是由 matchserver 或 room 管理服务提前创建房间，roomserver 只接受合法分配。
+当前 roomserver 仍保留“收到合法 room token 后按 room_id 自动创建房间”的实现。上游 matchserver 已负责分配 roomserver 和 room_id，后续如果要更严格控制房间生命周期，可以改成由 matchserver 或房间管理服务提前创建房间，roomserver 只接受已登记的合法房间。
 
 ## 9. Room 如何处理玩家加入
 
@@ -1427,8 +1427,6 @@ src/roomserver/CLIENT_PREDICTION_ROLLBACK.md
 
 当前代码还有这些限制：
 
-- 没有接 matchserver。
-- 没有接 logicserver。
 - 没有统一读取 `config/config.yaml`，当前进程入口仍使用默认配置启动。
 - JSON payload 只是第一版调试方案。
 - 没有完整客户端测试工具。
@@ -1447,12 +1445,10 @@ src/roomserver/CLIENT_PREDICTION_ROLLBACK.md
 3. 把 roomserver 配置接入统一 YAML 加载。
 4. 增加房间空闲关闭和玩家重复登录处理。
 5. 把 JSON payload 替换或兼容 protobuf。
-6. 实现 matchserver 的房间分配和 room token 签发。
-7. logicserver 调 matchserver，客户端从 logic 拿 room token。
-8. 客户端接入预测、插值、回滚和重放。
-9. 加入基础移动规则和更完整的服务端校验。
-10. 扩展地图 mesh、trigger 区域和 PhysX raycast 命中结算。
-11. 实现武器、伤害、死亡、结算。
+6. 客户端接入预测、插值、回滚和重放。
+7. 加入基础移动规则和更完整的服务端校验。
+8. 扩展地图 mesh、trigger 区域和 PhysX raycast 命中结算。
+9. 实现武器、伤害、死亡、结算。
 
 ## 24. 一句话总结
 
