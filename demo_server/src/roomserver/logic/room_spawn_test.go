@@ -26,6 +26,12 @@ func (s *testSession) Send(message protocol.Message) bool {
 	return true
 }
 
+// SendSnapshot 记录待发送快照消息
+func (s *testSession) SendSnapshot(message protocol.Message) bool {
+	s.messages = append(s.messages, message)
+	return true
+}
+
 // Close 关闭测试会话
 func (s *testSession) Close() {
 	s.closed = true

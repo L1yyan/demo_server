@@ -10,10 +10,11 @@ const (
 	// SyncModeSnapshotOnly 表示只使用服务端快照同步
 	SyncModeSnapshotOnly = "snapshot_only"
 	// SyncModePredictionAuthoritative 表示启用客户端预测和服务端权威纠偏
-	SyncModePredictionAuthoritative = "prediction_authoritative"
-	correctionReasonPositionError   = "position_error"
-	correctionReasonAngleError      = "angle_error"
-	correctionReasonStaleInput      = "stale_input"
+	SyncModePredictionAuthoritative     = "prediction_authoritative"
+	correctionReasonPositionError       = "position_error"
+	correctionReasonAngleError          = "angle_error"
+	correctionReasonStaleInput          = "stale_input"
+	correctionReasonLateInputReschedule = "late_input_reschedule"
 )
 
 // SyncConfig 房间同步配置
@@ -60,7 +61,7 @@ func (c SyncConfig) Normalize(tickRate int) SyncConfig {
 		c.MaxInputBatchFrames = 8
 	}
 	if c.MaxInputHoldTicks < 0 {
-		c.MaxInputHoldTicks = 3
+		c.MaxInputHoldTicks = 8
 	}
 	if c.CorrectionMinIntervalTicks <= 0 {
 		c.CorrectionMinIntervalTicks = 2
@@ -69,16 +70,18 @@ func (c SyncConfig) Normalize(tickRate int) SyncConfig {
 }
 
 type playerSyncState struct {
-	inputs                map[int64]authoritativeInput
-	predictedStates       map[int64]protocol.PredictedPlayerState
-	authoritativeHistory  map[int64]playerFrameState
-	lastInput             authoritativeInput
-	hasLastInput          bool
-	lastInputTick         int64
-	lastAppliedTick       int64
-	lastAcceptedInputTick int64
-	lastVerifiedTick      int64
-	lastCorrectionTick    int64
+	inputs                   map[int64]authoritativeInput
+	predictedStates          map[int64]protocol.PredictedPlayerState
+	authoritativeHistory     map[int64]playerFrameState
+	lateRescheduledTicks     map[int64]bool
+	lastInputDiagnosticTicks map[string]int64
+	lastInput                authoritativeInput
+	hasLastInput             bool
+	lastInputTick            int64
+	lastAppliedTick          int64
+	lastAcceptedInputTick    int64
+	lastVerifiedTick         int64
+	lastCorrectionTick       int64
 }
 
 type playerFrameState struct {
@@ -95,9 +98,11 @@ type playerFrameState struct {
 // newPlayerSyncState 创建玩家同步状态
 func newPlayerSyncState() *playerSyncState {
 	return &playerSyncState{
-		inputs:               make(map[int64]authoritativeInput),
-		predictedStates:      make(map[int64]protocol.PredictedPlayerState),
-		authoritativeHistory: make(map[int64]playerFrameState),
+		inputs:                   make(map[int64]authoritativeInput),
+		predictedStates:          make(map[int64]protocol.PredictedPlayerState),
+		authoritativeHistory:     make(map[int64]playerFrameState),
+		lateRescheduledTicks:     make(map[int64]bool),
+		lastInputDiagnosticTicks: make(map[string]int64),
 	}
 }
 

@@ -32,6 +32,7 @@ type Player struct {
 type Session interface {
 	ID() string
 	Send(protocol.Message) bool
+	SendSnapshot(protocol.Message) bool
 	Close()
 }
 

@@ -26,6 +26,17 @@ type roomEvent struct {
 	batch    protocol.PlayerInputBatch
 }
 
+const (
+	inputDiagnosticAccepted          = "accepted"
+	inputDiagnosticLateRescheduled   = "late_rescheduled"
+	inputDiagnosticLateDropped       = "late_dropped"
+	inputDiagnosticFutureDropped     = "future_dropped"
+	inputDiagnosticStaleCorrection   = "stale_correction"
+	inputDiagnosticRescheduleDropped = "reschedule_dropped"
+	inputDiagnosticIntervalTicks     = 20
+	lateInputCorrectionDelayTicks    = 3
+)
+
 // Room 单局房间
 type Room struct {
 	id             string
@@ -358,22 +369,21 @@ func (r *Room) handleInputBatch(ctx context.Context, playerID uint64, batch prot
 		return
 	}
 
+	acceptedInBatch := false
+	var latestLateInput authoritativeInput
+	hasLateInput := false
 	for _, frame := range batch.Frames {
 		inputTick := frame.ClientTick
 		if inputTick == 0 {
 			inputTick = batch.BaseClientTick
 		}
 		if inputTick < r.tick-r.syncConfig.RollbackWindowTicks {
+			r.logInputDiagnostic(ctx, syncState, inputDiagnosticStaleCorrection, playerID, inputTick, 0)
 			r.sendCurrentCorrection(player, syncState, correctionReasonStaleInput)
 			continue
 		}
 		if inputTick > r.tick+r.syncConfig.FutureInputWindowTicks {
-			continue
-		}
-		if inputTick <= syncState.lastAppliedTick {
-			continue
-		}
-		if _, exists := syncState.inputs[inputTick]; exists {
+			r.logInputDiagnostic(ctx, syncState, inputDiagnosticFutureDropped, playerID, inputTick, 0)
 			continue
 		}
 
@@ -382,14 +392,104 @@ func (r *Room) handleInputBatch(ctx context.Context, playerID uint64, batch prot
 		if !ok {
 			continue
 		}
-		syncState.inputs[inputTick] = sanitized
-		if inputTick > syncState.lastAcceptedInputTick {
-			syncState.lastAcceptedInputTick = inputTick
+		if inputTick <= syncState.lastAppliedTick {
+			if r.canRescheduleLateInput(inputTick, syncState) && (!hasLateInput || inputTick > latestLateInput.ClientTick) {
+				latestLateInput = sanitized
+				hasLateInput = true
+			} else {
+				r.logInputDiagnostic(ctx, syncState, inputDiagnosticLateDropped, playerID, inputTick, 0)
+			}
+			continue
 		}
+		if _, exists := syncState.inputs[inputTick]; exists {
+			continue
+		}
+
+		r.acceptInput(syncState, inputTick, inputTick, sanitized)
+		r.logInputDiagnostic(ctx, syncState, inputDiagnosticAccepted, playerID, inputTick, inputTick)
+		acceptedInBatch = true
 		if frame.PredictedState != nil && predictedStateFinite(*frame.PredictedState) {
 			syncState.predictedStates[inputTick] = *frame.PredictedState
 		}
 	}
+	if acceptedInBatch || !hasLateInput {
+		return
+	}
+	targetTick, ok := r.nextAvailableInputTick(syncState)
+	if !ok {
+		r.logInputDiagnostic(ctx, syncState, inputDiagnosticRescheduleDropped, playerID, latestLateInput.ClientTick, 0)
+		return
+	}
+	originalLateTick := latestLateInput.ClientTick
+	latestLateInput.ClientTick = targetTick
+	r.acceptInput(syncState, targetTick, originalLateTick, latestLateInput)
+	syncState.lateRescheduledTicks[targetTick] = true
+	r.logInputDiagnostic(ctx, syncState, inputDiagnosticLateRescheduled, playerID, originalLateTick, targetTick)
+}
+
+// canRescheduleLateInput 判断轻微迟到输入是否还能排到后续 tick 执行
+func (r *Room) canRescheduleLateInput(inputTick int64, syncState *playerSyncState) bool {
+	if syncState == nil || inputTick > syncState.lastAppliedTick {
+		return false
+	}
+	if inputTick <= syncState.lastAcceptedInputTick {
+		return false
+	}
+	return inputTick >= r.tick-r.syncConfig.RollbackWindowTicks
+}
+
+// nextAvailableInputTick 获取下一帧可写入的输入 tick
+func (r *Room) nextAvailableInputTick(syncState *playerSyncState) (int64, bool) {
+	if syncState == nil {
+		return 0, false
+	}
+	targetTick := r.tick + 1
+	if syncState.lastAppliedTick+1 > targetTick {
+		targetTick = syncState.lastAppliedTick + 1
+	}
+	maxTick := r.tick + r.syncConfig.FutureInputWindowTicks
+	for targetTick <= maxTick {
+		if _, exists := syncState.inputs[targetTick]; !exists {
+			return targetTick, true
+		}
+		targetTick++
+	}
+	return 0, false
+}
+
+// acceptInput 写入服务端待执行输入并推进客户端输入确认 tick
+func (r *Room) acceptInput(syncState *playerSyncState, executeTick int64, acceptedClientTick int64, input authoritativeInput) {
+	input.ClientTick = executeTick
+	syncState.inputs[executeTick] = input
+	if acceptedClientTick > syncState.lastAcceptedInputTick {
+		syncState.lastAcceptedInputTick = acceptedClientTick
+	}
+}
+
+// logInputDiagnostic 按原因节流输出输入处理诊断日志
+func (r *Room) logInputDiagnostic(ctx context.Context, syncState *playerSyncState, reason string, playerID uint64, inputTick int64, targetTick int64) {
+	if syncState == nil {
+		return
+	}
+	if syncState.lastInputDiagnosticTicks == nil {
+		syncState.lastInputDiagnosticTicks = make(map[string]int64)
+	}
+	lastLoggedTick := syncState.lastInputDiagnosticTicks[reason]
+	if lastLoggedTick > 0 && r.tick-lastLoggedTick < inputDiagnosticIntervalTicks {
+		return
+	}
+	syncState.lastInputDiagnosticTicks[reason] = r.tick
+
+	glog.Info(ctx, "room input diagnostic",
+		glog.String("room_id", r.id),
+		glog.Uint64("player_id", playerID),
+		glog.String("reason", reason),
+		glog.Int64("server_tick", r.tick),
+		glog.Int64("input_tick", inputTick),
+		glog.Int64("target_tick", targetTick),
+		glog.Int64("last_applied_tick", syncState.lastAppliedTick),
+		glog.Int64("last_accepted_input_tick", syncState.lastAcceptedInputTick),
+	)
 }
 
 // update 更新房间状态并按频率广播快照
@@ -425,6 +525,7 @@ func (r *Room) updatePlayers(ctx context.Context) {
 		}
 		syncState.lastAppliedTick = r.tick
 		r.saveAuthoritativeState(playerID, player)
+		r.sendLateInputRescheduleCorrection(ctx, player, syncState, r.tick)
 		r.verifyPredictedState(ctx, player, syncState, r.tick)
 		r.cleanupSyncState(syncState)
 	}
@@ -476,6 +577,26 @@ func (r *Room) simulatePlayerTick(ctx context.Context, player *Player, input aut
 func (r *Room) saveAuthoritativeState(playerID uint64, player *Player) {
 	syncState := r.ensureSyncState(playerID)
 	syncState.authoritativeHistory[r.tick] = frameStateFromPlayer(r.tick, player)
+}
+
+// sendLateInputRescheduleCorrection 对迟到重排后的权威状态做低频重同步
+func (r *Room) sendLateInputRescheduleCorrection(ctx context.Context, player *Player, syncState *playerSyncState, tick int64) {
+	if syncState == nil || player == nil || !syncState.lateRescheduledTicks[tick] {
+		return
+	}
+	if syncState.lastAcceptedInputTick+lateInputCorrectionDelayTicks >= tick {
+		return
+	}
+	if tick-syncState.lastCorrectionTick < r.syncConfig.CorrectionMinIntervalTicks {
+		return
+	}
+	authoritative, exists := syncState.authoritativeHistory[tick]
+	if !exists {
+		return
+	}
+	if err := r.sendCorrection(player, syncState, authoritative, correctionReasonLateInputReschedule, 0, 0); err != nil {
+		glog.Warn(ctx, "send late input reschedule correction failed", glog.String("room_id", r.id), glog.Uint64("player_id", player.ID), glog.Err(err))
+	}
 }
 
 // verifyPredictedState 校验客户端预测状态并在超阈值时纠偏
@@ -542,6 +663,16 @@ func (r *Room) sendCorrection(player *Player, syncState *playerSyncState, state 
 	}
 	if player.Session.Send(message) {
 		syncState.lastCorrectionTick = r.tick
+		glog.Info(context.Background(), "state correction sent",
+			glog.String("room_id", player.RoomID),
+			glog.Uint64("player_id", player.ID),
+			glog.String("reason", reason),
+			glog.Int64("rollback_tick", state.Tick),
+			glog.Int64("server_tick", r.tick),
+			glog.Int64("last_accepted_input_tick", syncState.lastAcceptedInputTick),
+			glog.Float64("position_error", posError),
+			glog.Float64("angle_error", angError),
+		)
 	}
 	return nil
 }
@@ -584,8 +715,22 @@ func (r *Room) broadcastSnapshots(ctx context.Context) {
 			glog.Error(ctx, "build snapshot failed", glog.String("room_id", r.id), glog.Err(err))
 			continue
 		}
-		player.Session.Send(message)
+		if r.tick%int64(r.tickRate) == 0 {
+			glog.Info(ctx, "room snapshot broadcast", glog.String("room_id", r.id), glog.Int64("server_tick", r.tick), glog.Uint64("receiver_player_id", player.ID), glog.Int("room_player_count", len(players)), glog.Int("visible_player_count", len(visible)), glog.Any("snapshot_player_ids", playerStateIDs(states)))
+		}
+		if !player.Session.SendSnapshot(message) {
+			glog.Warn(ctx, "room snapshot send dropped", glog.String("room_id", r.id), glog.Int64("server_tick", r.tick), glog.Uint64("receiver_player_id", player.ID), glog.Int("snapshot_player_count", len(states)), glog.Any("snapshot_player_ids", playerStateIDs(states)))
+		}
 	}
+}
+
+// playerStateIDs 提取快照里的玩家ID用于诊断日志
+func playerStateIDs(states []protocol.PlayerState) []uint64 {
+	ids := make([]uint64, 0, len(states))
+	for _, state := range states {
+		ids = append(ids, state.PlayerID)
+	}
+	return ids
 }
 
 // ensureSyncState 获取或创建玩家同步状态
@@ -612,6 +757,11 @@ func (r *Room) cleanupSyncState(syncState *playerSyncState) {
 	for tick := range syncState.predictedStates {
 		if tick < minTick || tick <= syncState.lastVerifiedTick-r.syncConfig.RollbackWindowTicks {
 			delete(syncState.predictedStates, tick)
+		}
+	}
+	for tick := range syncState.lateRescheduledTicks {
+		if tick < minTick || tick <= syncState.lastAppliedTick {
+			delete(syncState.lateRescheduledTicks, tick)
 		}
 	}
 	for tick := range syncState.authoritativeHistory {

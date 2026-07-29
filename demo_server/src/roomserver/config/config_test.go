@@ -28,3 +28,11 @@ func TestDefaultConfigMapCollisionPath(t *testing.T) {
 		t.Fatalf("unexpected map collision path: %s", cfg.MapCollisionPath)
 	}
 }
+
+// TestDefaultConfigMaxInputHoldTicks 验证默认弱网输入沿用窗口
+func TestDefaultConfigMaxInputHoldTicks(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.MaxInputHoldTicks != 8 {
+		t.Fatalf("expected default max input hold ticks 8, got %d", cfg.MaxInputHoldTicks)
+	}
+}

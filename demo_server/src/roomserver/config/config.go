@@ -68,7 +68,7 @@ func DefaultConfig() Config {
 		HardPositionTolerance:      0.5,
 		AngleTolerance:             2.0,
 		MaxInputBatchFrames:        8,
-		MaxInputHoldTicks:          3,
+		MaxInputHoldTicks:          8,
 		CorrectionMinIntervalTicks: 2,
 	}
 }

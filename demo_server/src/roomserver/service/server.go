@@ -108,7 +108,7 @@ func (s *Server) HandleSessionClosed(ctx context.Context, session *Session) {
 	if session.PlayerID() != 0 && s.manager != nil {
 		s.manager.LeaveRoom(session.PlayerID())
 	}
-	glog.Info(ctx, "session closed", glog.String("session_id", session.ID()), glog.Uint64("player_id", session.PlayerID()))
+	glog.Info(ctx, "session closed", glog.String("session_id", session.ID()), glog.Uint64("player_id", session.PlayerID()), glog.String("room_id", session.RoomID()))
 }
 
 // newPhysicsWorldFactory 根据配置创建物理世界工厂

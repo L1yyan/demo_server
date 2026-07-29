@@ -17,15 +17,16 @@ import (
 
 // Session 客户端连接会话
 type Session struct {
-	id       string
-	conn     *kcp.UDPSession
-	cfg      roomconfig.Config
-	handler  MessageHandler
-	sendCh   chan protocol.Message
-	closeCh  chan struct{}
-	closeMu  sync.Once
-	playerID uint64
-	roomID   string
+	id         string
+	conn       *kcp.UDPSession
+	cfg        roomconfig.Config
+	handler    MessageHandler
+	sendCh     chan protocol.Message
+	snapshotCh chan protocol.Message
+	closeCh    chan struct{}
+	closeMu    sync.Once
+	playerID   uint64
+	roomID     string
 }
 
 // MessageHandler 处理客户端消息
@@ -37,12 +38,13 @@ type MessageHandler interface {
 // NewSession 创建客户端连接会话
 func NewSession(id string, conn *kcp.UDPSession, cfg roomconfig.Config, handler MessageHandler) *Session {
 	return &Session{
-		id:      id,
-		conn:    conn,
-		cfg:     cfg,
-		handler: handler,
-		sendCh:  make(chan protocol.Message, cfg.WriteQueueSize),
-		closeCh: make(chan struct{}),
+		id:         id,
+		conn:       conn,
+		cfg:        cfg,
+		handler:    handler,
+		sendCh:     make(chan protocol.Message, cfg.WriteQueueSize),
+		snapshotCh: make(chan protocol.Message, 1),
+		closeCh:    make(chan struct{}),
 	}
 }
 
@@ -54,6 +56,11 @@ func (s *Session) ID() string {
 // PlayerID 返回玩家ID
 func (s *Session) PlayerID() uint64 {
 	return s.playerID
+}
+
+// RoomID 返回房间ID
+func (s *Session) RoomID() string {
+	return s.roomID
 }
 
 // SetPlayer 绑定玩家和房间信息
@@ -68,6 +75,30 @@ func (s *Session) Send(message protocol.Message) bool {
 	case <-s.closeCh:
 		return false
 	case s.sendCh <- message:
+		return true
+	default:
+		return false
+	}
+}
+
+// SendSnapshot 投递状态快照，队列满时使用最新快照覆盖旧快照
+func (s *Session) SendSnapshot(message protocol.Message) bool {
+	select {
+	case <-s.closeCh:
+		return false
+	case s.snapshotCh <- message:
+		return true
+	default:
+	}
+
+	select {
+	case <-s.snapshotCh:
+	default:
+	}
+	select {
+	case <-s.closeCh:
+		return false
+	case s.snapshotCh <- message:
 		return true
 	default:
 		return false
@@ -113,9 +144,10 @@ func (s *Session) readLoop(ctx context.Context) {
 		message, err := protocol.ReadMessage(s.conn, s.cfg.MaxPayloadSize)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
+				glog.Warn(ctx, "room session read closed", glog.String("session_id", s.id), glog.Uint64("player_id", s.playerID), glog.String("room_id", s.roomID), glog.Err(err))
 				return
 			}
-			glog.Warn(ctx, "read room message failed", glog.String("session_id", s.id), glog.Err(err))
+			glog.Warn(ctx, "read room message failed", glog.String("session_id", s.id), glog.Uint64("player_id", s.playerID), glog.String("room_id", s.roomID), glog.Err(err))
 			return
 		}
 		if s.handler != nil {
@@ -134,13 +166,25 @@ func (s *Session) writeLoop(ctx context.Context) {
 		case <-s.closeCh:
 			return
 		case message := <-s.sendCh:
-			if err := protocol.WriteMessage(s.conn, message, s.cfg.MaxPayloadSize); err != nil {
-				glog.Warn(ctx, "write room message failed", glog.String("session_id", s.id), glog.Err(err))
-				s.Close()
+			if !s.writeMessage(ctx, message) {
+				return
+			}
+		case message := <-s.snapshotCh:
+			if !s.writeMessage(ctx, message) {
 				return
 			}
 		}
 	}
+}
+
+// writeMessage 写出单条业务消息
+func (s *Session) writeMessage(ctx context.Context, message protocol.Message) bool {
+	if err := protocol.WriteMessage(s.conn, message, s.cfg.MaxPayloadSize); err != nil {
+		glog.Warn(ctx, "write room message failed", glog.String("session_id", s.id), glog.Err(err))
+		s.Close()
+		return false
+	}
+	return true
 }
 
 // newSessionID 创建连接会话ID
