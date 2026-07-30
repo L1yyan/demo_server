@@ -60,6 +60,8 @@ const (
 	inputDiagnosticIntervalTicks     = 20
 	lateInputCorrectionDelayTicks    = 3
 	defaultGameDuration              = 3 * time.Minute
+	defaultPlayerHP                  = 100
+	defaultRespawnInvincibleDuration = 5 * time.Second
 	defaultFireDamage                = 20
 	defaultFireMaxDistance           = 100.0
 	defaultFireViewHeight            = 0.9
@@ -345,11 +347,12 @@ func (r *Room) handleJoinEvent(ctx context.Context, event roomEvent) {
 	player.Z = spawnPoint.Position.Z
 	player.Yaw = spawnPoint.Yaw
 	player.Pitch = 0
-	player.HP = 100
+	player.HP = defaultPlayerHP
 	player.KillCount = 0
 	player.DeathCount = 0
 	player.SpawnID = spawnPoint.ID
 	player.Alive = true
+	player.InvincibleUntilTick = 0
 	player.SyncMode = r.playerSyncMode(player)
 	if err := r.physics.AddPlayer(player.ID, spawnPoint.Position); err != nil {
 		message, _ := protocol.NewJSONMessage(protocol.MsgJoinRoomAck, r.buildJoinAck(false, nil, "physics add player failed"))
@@ -569,7 +572,7 @@ func (r *Room) playerStates() []protocol.PlayerState {
 		if player == nil {
 			continue
 		}
-		states = append(states, player.ToState())
+		states = append(states, player.ToStateAt(r.tick))
 	}
 	return states
 }
@@ -840,6 +843,7 @@ func (r *Room) updatePlayers(ctx context.Context) {
 		if player == nil || !player.Alive {
 			continue
 		}
+		r.clearExpiredInvincibility(player)
 		syncState := r.ensureSyncState(playerID)
 		inputState, hasExactInput := r.inputForTick(syncState, r.tick)
 		if hasExactInput || syncState.hasLastInput {
@@ -851,6 +855,14 @@ func (r *Room) updatePlayers(ctx context.Context) {
 		r.verifyPredictedState(ctx, player, syncState, r.tick)
 		r.cleanupSyncState(syncState)
 	}
+}
+
+// clearExpiredInvincibility 清理已经过期的无敌状态
+func (r *Room) clearExpiredInvincibility(player *Player) {
+	if player == nil || player.InvincibleUntilTick == 0 || player.InvincibleUntilTick > r.tick {
+		return
+	}
+	player.InvincibleUntilTick = 0
 }
 
 // inputForTick 获取当前服务端帧应使用的输入
@@ -926,6 +938,10 @@ func (r *Room) applyFireDamage(ctx context.Context, shooter *Player, target *Pla
 	if shooter == nil || target == nil || !target.Alive {
 		return
 	}
+	if target.IsInvincible(r.tick) {
+		glog.Info(ctx, "player fire ignored by invincibility", glog.String("room_id", r.id), glog.Uint64("shooter_player_id", shooter.ID), glog.Uint64("target_player_id", target.ID), glog.Int64("server_tick", r.tick), glog.Int64("invincible_until_tick", target.InvincibleUntilTick))
+		return
+	}
 	target.HP -= defaultFireDamage
 	if target.HP < 0 {
 		target.HP = 0
@@ -942,10 +958,84 @@ func (r *Room) applyFireDamage(ctx context.Context, shooter *Player, target *Pla
 	}
 	target.DeathCount++
 	target.Alive = false
-	if err := r.physics.RemovePlayer(target.ID); err != nil {
-		glog.Warn(ctx, "remove dead physics player failed", glog.String("room_id", r.id), glog.Uint64("player_id", target.ID), glog.Err(err))
+	if !r.respawnPlayerAtSpawn(ctx, target) {
+		r.saveAuthoritativeState(target.ID, target)
+		return
 	}
 	r.saveAuthoritativeState(target.ID, target)
+	r.sendCurrentCorrection(target, r.ensureSyncState(target.ID), correctionReasonRespawn)
+}
+
+// respawnPlayerAtSpawn 将死亡玩家复活到原出生点
+func (r *Room) respawnPlayerAtSpawn(ctx context.Context, player *Player) bool {
+	if player == nil || player.SpawnID == "" {
+		return false
+	}
+	spawnPoint, ok := r.spawnPointByID(player.SpawnID)
+	if !ok {
+		glog.Warn(ctx, "respawn spawn point not found", glog.String("room_id", r.id), glog.Uint64("player_id", player.ID), glog.String("spawn_id", player.SpawnID))
+		return false
+	}
+
+	// 先同步物理位置，成功后再恢复逻辑存活状态
+	if err := r.physics.SetPlayerPosition(player.ID, spawnPoint.Position); err != nil {
+		if err != ErrPhysicsPlayerNotFound {
+			glog.Warn(ctx, "respawn physics player failed", glog.String("room_id", r.id), glog.Uint64("player_id", player.ID), glog.Err(err))
+			return false
+		}
+		if addErr := r.physics.AddPlayer(player.ID, spawnPoint.Position); addErr != nil {
+			glog.Warn(ctx, "respawn add physics player failed", glog.String("room_id", r.id), glog.Uint64("player_id", player.ID), glog.Err(addErr))
+			return false
+		}
+	}
+
+	player.X = spawnPoint.Position.X
+	player.Y = spawnPoint.Position.Y
+	player.Z = spawnPoint.Position.Z
+	player.Yaw = spawnPoint.Yaw
+	player.Pitch = 0
+	player.HP = defaultPlayerHP
+	player.Alive = true
+	player.InvincibleUntilTick = r.tick + durationToTicks(defaultRespawnInvincibleDuration, r.tickRate)
+	r.discardFutureSyncState(player.ID)
+	glog.Info(ctx, "player respawned", glog.String("room_id", r.id), glog.Uint64("player_id", player.ID), glog.String("spawn_id", player.SpawnID), glog.Int64("server_tick", r.tick), glog.Int64("invincible_until_tick", player.InvincibleUntilTick))
+	return true
+}
+
+// spawnPointByID 按出生点ID查询地图出生点
+func (r *Room) spawnPointByID(spawnID string) (SpawnPoint, bool) {
+	if spawnID == "" {
+		return SpawnPoint{}, false
+	}
+	for _, spawnPoint := range r.physics.SpawnPoints() {
+		if spawnPoint.ID == spawnID {
+			return spawnPoint, true
+		}
+	}
+	return SpawnPoint{}, false
+}
+
+// discardFutureSyncState 清理复活后不再适用的未来同步状态
+func (r *Room) discardFutureSyncState(playerID uint64) {
+	syncState := r.ensureSyncState(playerID)
+	for tick := range syncState.inputs {
+		if tick > r.tick {
+			delete(syncState.inputs, tick)
+		}
+	}
+	for tick := range syncState.predictedStates {
+		if tick > r.tick {
+			delete(syncState.predictedStates, tick)
+		}
+	}
+	for tick := range syncState.lateRescheduledTicks {
+		if tick > r.tick {
+			delete(syncState.lateRescheduledTicks, tick)
+		}
+	}
+	syncState.hasLastInput = false
+	syncState.lastInput = authoritativeInput{}
+	syncState.lastInputTick = 0
 }
 
 // saveAuthoritativeState 保存玩家当前权威状态
@@ -1081,9 +1171,9 @@ func (r *Room) broadcastSnapshots(ctx context.Context) {
 	for _, player := range players {
 		visible := r.aoi.FilterVisible(player, players)
 		states := make([]protocol.PlayerState, 0, len(visible)+1)
-		states = append(states, player.ToState())
+		states = append(states, player.ToStateAt(r.tick))
 		for _, visiblePlayer := range visible {
-			states = append(states, visiblePlayer.ToState())
+			states = append(states, visiblePlayer.ToStateAt(r.tick))
 		}
 		message, err := protocol.NewJSONMessage(protocol.MsgSnapshot, protocol.Snapshot{ServerTick: r.tick, Players: states})
 		if err != nil {

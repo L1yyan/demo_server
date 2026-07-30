@@ -141,16 +141,18 @@ type PredictedPlayerState struct {
 
 // PlayerState 玩家快照状态
 type PlayerState struct {
-	PlayerID   uint64  `json:"player_id"`   // 玩家ID
-	SpawnID    string  `json:"spawn_id"`    // 出生点ID
-	X          float64 `json:"x"`           // X坐标
-	Y          float64 `json:"y"`           // Y坐标
-	Z          float64 `json:"z"`           // Z坐标
-	Yaw        float64 `json:"yaw"`         // 水平视角
-	Pitch      float64 `json:"pitch"`       // 垂直视角
-	HP         int     `json:"hp"`          // 生命值
-	KillCount  int     `json:"kill_count"`  // 击杀数量
-	DeathCount int     `json:"death_count"` // 死亡数量
+	PlayerID            uint64  `json:"player_id"`             // 玩家ID
+	SpawnID             string  `json:"spawn_id"`              // 出生点ID
+	X                   float64 `json:"x"`                     // X坐标
+	Y                   float64 `json:"y"`                     // Y坐标
+	Z                   float64 `json:"z"`                     // Z坐标
+	Yaw                 float64 `json:"yaw"`                   // 水平视角
+	Pitch               float64 `json:"pitch"`                 // 垂直视角
+	HP                  int     `json:"hp"`                    // 生命值
+	KillCount           int     `json:"kill_count"`            // 击杀数量
+	DeathCount          int     `json:"death_count"`           // 死亡数量
+	Invincible          bool    `json:"invincible"`            // 是否无敌
+	InvincibleUntilTick int64   `json:"invincible_until_tick"` // 无敌结束帧号
 }
 
 // Snapshot 状态快照

@@ -305,5 +305,8 @@ func cError(errBuf *C.char, action string) error {
 	if message == "" {
 		return errors.New(action)
 	}
+	if strings.Contains(message, "player not found") {
+		return logic.ErrPhysicsPlayerNotFound
+	}
 	return fmt.Errorf("%s: %s", action, message)
 }

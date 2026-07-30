@@ -87,17 +87,20 @@ func TestRoomJoinReusesFreedSpawnPoint(t *testing.T) {
 	}
 }
 
-// TestPlayerStateIncludesSpawnID 验证快照玩家状态携带出生点ID和战绩
+// TestPlayerStateIncludesSpawnID 验证快照玩家状态携带出生点ID、战绩和无敌状态
 func TestPlayerStateIncludesSpawnID(t *testing.T) {
-	player := &Player{ID: 1, SpawnID: defaultSpawnAID, X: -4, Y: 0.1, Z: 0, HP: 100, KillCount: 2, DeathCount: 1}
+	player := &Player{ID: 1, SpawnID: defaultSpawnAID, X: -4, Y: 0.1, Z: 0, HP: 100, KillCount: 2, DeathCount: 1, InvincibleUntilTick: 15}
 
-	state := player.ToState()
+	state := player.ToStateAt(10)
 
 	if state.SpawnID != defaultSpawnAID {
 		t.Fatalf("expected state spawn %s, got %s", defaultSpawnAID, state.SpawnID)
 	}
 	if state.KillCount != 2 || state.DeathCount != 1 {
 		t.Fatalf("unexpected state stats: kills %d deaths %d", state.KillCount, state.DeathCount)
+	}
+	if !state.Invincible || state.InvincibleUntilTick != 15 {
+		t.Fatalf("unexpected invincible state: %+v", state)
 	}
 }
 

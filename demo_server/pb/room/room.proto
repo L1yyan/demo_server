@@ -109,6 +109,8 @@ message PlayerState {
   string spawn_id = 8; // 出生点ID
   int32 kill_count = 9; // 击杀数量
   int32 death_count = 10; // 死亡数量
+  bool invincible = 11; // 是否无敌
+  int64 invincible_until_tick = 12; // 无敌结束帧号
 }
 
 // Snapshot 状态快照

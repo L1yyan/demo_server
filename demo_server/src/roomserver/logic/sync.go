@@ -15,6 +15,7 @@ const (
 	correctionReasonAngleError          = "angle_error"
 	correctionReasonStaleInput          = "stale_input"
 	correctionReasonLateInputReschedule = "late_input_reschedule"
+	correctionReasonRespawn             = "respawn"
 )
 
 // SyncConfig 房间同步配置
@@ -85,16 +86,17 @@ type playerSyncState struct {
 }
 
 type playerFrameState struct {
-	Tick       int64
-	PlayerID   uint64
-	Position   Vector3
-	Yaw        float64
-	Pitch      float64
-	HP         int
-	KillCount  int
-	DeathCount int
-	Alive      bool
-	SpawnID    string
+	Tick                int64
+	PlayerID            uint64
+	Position            Vector3
+	Yaw                 float64
+	Pitch               float64
+	HP                  int
+	KillCount           int
+	DeathCount          int
+	Alive               bool
+	SpawnID             string
+	InvincibleUntilTick int64
 }
 
 // newPlayerSyncState 创建玩家同步状态
@@ -114,32 +116,35 @@ func frameStateFromPlayer(tick int64, player *Player) playerFrameState {
 		return playerFrameState{Tick: tick}
 	}
 	return playerFrameState{
-		Tick:       tick,
-		PlayerID:   player.ID,
-		Position:   Vector3{X: player.X, Y: player.Y, Z: player.Z},
-		Yaw:        player.Yaw,
-		Pitch:      player.Pitch,
-		HP:         player.HP,
-		KillCount:  player.KillCount,
-		DeathCount: player.DeathCount,
-		Alive:      player.Alive,
-		SpawnID:    player.SpawnID,
+		Tick:                tick,
+		PlayerID:            player.ID,
+		Position:            Vector3{X: player.X, Y: player.Y, Z: player.Z},
+		Yaw:                 player.Yaw,
+		Pitch:               player.Pitch,
+		HP:                  player.HP,
+		KillCount:           player.KillCount,
+		DeathCount:          player.DeathCount,
+		Alive:               player.Alive,
+		SpawnID:             player.SpawnID,
+		InvincibleUntilTick: player.InvincibleUntilTick,
 	}
 }
 
 // toPlayerState 转换为客户端协议状态
 func (s playerFrameState) toPlayerState() protocol.PlayerState {
 	return protocol.PlayerState{
-		PlayerID:   s.PlayerID,
-		SpawnID:    s.SpawnID,
-		X:          s.Position.X,
-		Y:          s.Position.Y,
-		Z:          s.Position.Z,
-		Yaw:        s.Yaw,
-		Pitch:      s.Pitch,
-		HP:         s.HP,
-		KillCount:  s.KillCount,
-		DeathCount: s.DeathCount,
+		PlayerID:            s.PlayerID,
+		SpawnID:             s.SpawnID,
+		X:                   s.Position.X,
+		Y:                   s.Position.Y,
+		Z:                   s.Position.Z,
+		Yaw:                 s.Yaw,
+		Pitch:               s.Pitch,
+		HP:                  s.HP,
+		KillCount:           s.KillCount,
+		DeathCount:          s.DeathCount,
+		Invincible:          s.InvincibleUntilTick > s.Tick,
+		InvincibleUntilTick: s.InvincibleUntilTick,
 	}
 }
 
