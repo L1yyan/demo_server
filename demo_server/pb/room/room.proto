@@ -44,6 +44,10 @@ message JoinRoomResp {
   double position_tolerance = 20; // 位置误差阈值
   double hard_position_tolerance = 21; // 硬纠偏位置阈值
   double angle_tolerance = 22; // 角度误差阈值
+  int64 game_duration_seconds = 23; // 对局时长秒数
+  bool game_started = 24; // 是否已开始对局
+  int64 game_start_tick = 25; // 对局开始帧号
+  int64 game_end_tick = 26; // 对局结束帧号
 }
 
 // Heartbeat 心跳消息
@@ -126,6 +130,27 @@ message StateCorrection {
   string reason = 6; // 纠偏原因
   double position_error = 7; // 位置误差
   double angle_error = 8; // 角度误差
+}
+
+// GameStart 对局开始通知
+message GameStart {
+  string room_id = 1; // 房间ID
+  int64 server_tick = 2; // 服务端当前帧号
+  int64 start_tick = 3; // 对局开始帧号
+  int64 end_tick = 4; // 对局结束帧号
+  int64 duration_seconds = 5; // 对局时长秒数
+  int64 server_time = 6; // 服务端时间戳
+}
+
+// GameOver 对局结束通知
+message GameOver {
+  string room_id = 1; // 房间ID
+  int64 server_tick = 2; // 服务端当前帧号
+  int64 start_tick = 3; // 对局开始帧号
+  int64 end_tick = 4; // 对局结束帧号
+  string reason = 5; // 结束原因
+  int64 server_time = 6; // 服务端时间戳
+  repeated PlayerState players = 7; // 结束时玩家状态
 }
 
 // ErrorResp 错误响应

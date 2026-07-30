@@ -50,7 +50,7 @@ func (s *Server) Start(ctx context.Context) error {
 		MaxInputHoldTicks:          s.cfg.MaxInputHoldTicks,
 		CorrectionMinIntervalTicks: s.cfg.CorrectionMinIntervalTicks,
 	}
-	manager := logic.NewRoomManagerWithSync(ctx, s.cfg.MaxRooms, s.cfg.MaxPlayersPerRoom, s.cfg.TickRate, s.cfg.SnapshotRate, syncConfig, s.cfg.DefaultMapID, s.cfg.PhysicsHash, logic.NewSimpleAOIFilter(), physicsFactory)
+	manager := logic.NewRoomManagerWithOptions(ctx, s.cfg.MaxRooms, s.cfg.MaxPlayersPerRoom, s.cfg.TickRate, s.cfg.SnapshotRate, syncConfig, s.cfg.DefaultMapID, s.cfg.PhysicsHash, s.cfg.GameDuration, logic.NewSimpleAOIFilter(), physicsFactory)
 	listener, err := kcp.ListenWithOptions(s.cfg.ListenAddr, nil, 10, 3)
 	if err != nil {
 		return fmt.Errorf("listen kcp: %w", err)

@@ -66,6 +66,7 @@ room_server_01:
   max_input_batch_frames: 8
   max_input_hold_ticks: 3
   correction_min_interval_ticks: 2
+  game_duration: "3m"
 ```
 
 注意：`cmd/main.go` 当前仍使用 `roomconfig.DefaultConfig()` 启动，`config/config.yaml` 已补齐 roomserver 配置示例，后续需要接入统一 YAML 加载器。

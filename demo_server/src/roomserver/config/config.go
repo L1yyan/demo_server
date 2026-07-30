@@ -38,6 +38,7 @@ type Config struct {
 	MaxInputBatchFrames        int           // 单批输入最大帧数
 	MaxInputHoldTicks          int64         // 缺帧时移动输入最大沿用帧数
 	CorrectionMinIntervalTicks int64         // 普通纠偏最小间隔帧数
+	GameDuration               time.Duration // 单局对局时长
 }
 
 // DefaultConfig 返回 roomserver 默认配置
@@ -70,6 +71,7 @@ func DefaultConfig() Config {
 		MaxInputBatchFrames:        8,
 		MaxInputHoldTicks:          8,
 		CorrectionMinIntervalTicks: 2,
+		GameDuration:               3 * time.Minute,
 	}
 }
 
@@ -153,6 +155,9 @@ func (c Config) Normalize() Config {
 	}
 	if c.CorrectionMinIntervalTicks <= 0 {
 		c.CorrectionMinIntervalTicks = defaults.CorrectionMinIntervalTicks
+	}
+	if c.GameDuration <= 0 {
+		c.GameDuration = defaults.GameDuration
 	}
 	return c
 }

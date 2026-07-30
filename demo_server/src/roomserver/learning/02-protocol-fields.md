@@ -52,6 +52,8 @@ const messageHeaderSize = 6
 | `MsgPlayerInputBatch` | `8` | 客户端 -> 服务端 | `PlayerInputBatch` | 新版批量输入 |
 | `MsgInputAck` | `9` | 服务端 -> 客户端 | `InputAck` | 输入接受和校验进度 |
 | `MsgStateCorrection` | `10` | 服务端 -> 客户端 | `StateCorrection` | 权威状态纠偏 |
+| `MsgGameStart` | `11` | 服务端 -> 客户端 | `GameStart` | 对局开始通知 |
+| `MsgGameOver` | `12` | 服务端 -> 客户端 | `GameOver` | 对局结束通知 |
 
 [../../../pb/room/room.proto](../../../pb/room/room.proto) 也定义了同名业务结构，字段含义和当前 JSON payload 基本对应。当前 KCP 链路实际使用的是 [../protocol/message.go](../protocol/message.go) 里的 Go 结构体和 JSON 编码。
 
@@ -105,6 +107,10 @@ DecodeJSON
 | `position_tolerance` | `PositionTolerance` | `float64` | 普通位置误差阈值 |
 | `hard_position_tolerance` | `HardPositionTolerance` | `float64` | 强制纠偏位置误差阈值 |
 | `angle_tolerance` | `AngleTolerance` | `float64` | 视角误差阈值 |
+| `game_duration_seconds` | `GameDurationSeconds` | `int64` | 对局时长秒数，当前默认 180 |
+| `game_started` | `GameStarted` | `bool` | 当前房间是否已开始对局 |
+| `game_start_tick` | `GameStartTick` | `int64` | 对局开始服务端帧号，未开始为 0 |
+| `game_end_tick` | `GameEndTick` | `int64` | 对局结束服务端帧号，未开始为 0 |
 
 客户端应先看 `ok`。如果 `ok=false`，只使用 `content` 展示或记录失败原因。只有 `ok=true` 时才使用出生点、tick、同步配置等字段初始化本地房间状态。
 
@@ -225,7 +231,34 @@ DecodeJSON
 
 客户端收到 correction 后，应该把本地玩家状态设置为 `state`，再从 `rollback_tick + 1` 开始用历史输入重放到当前本地帧。
 
-## 14. ErrorResponse 字段
+## 14. GameStart 字段
+
+两名玩家都进入房间后，服务端发送 `MsgGameStart`。构造位置是 [../logic/room.go](../logic/room.go) `broadcastGameStart`。
+
+| JSON 字段 | Go 字段 | 类型 | 含义 |
+| --- | --- | --- | --- |
+| `room_id` | `RoomID` | `string` | 房间 ID |
+| `server_tick` | `ServerTick` | `int64` | 服务端当前帧号 |
+| `start_tick` | `StartTick` | `int64` | 对局开始帧号 |
+| `end_tick` | `EndTick` | `int64` | 对局结束帧号 |
+| `duration_seconds` | `DurationSeconds` | `int64` | 对局时长秒数 |
+| `server_time` | `ServerTime` | `int64` | 服务端时间戳，Unix 毫秒 |
+
+## 15. GameOver 字段
+
+对局达到限时后，服务端发送 `MsgGameOver`。构造位置是 [../logic/room.go](../logic/room.go) `broadcastGameOver`。
+
+| JSON 字段 | Go 字段 | 类型 | 含义 |
+| --- | --- | --- | --- |
+| `room_id` | `RoomID` | `string` | 房间 ID |
+| `server_tick` | `ServerTick` | `int64` | 服务端当前帧号 |
+| `start_tick` | `StartTick` | `int64` | 对局开始帧号 |
+| `end_tick` | `EndTick` | `int64` | 对局结束帧号 |
+| `reason` | `Reason` | `string` | 结束原因，限时结束为 `time_limit` |
+| `server_time` | `ServerTime` | `int64` | 服务端时间戳，Unix 毫秒 |
+| `players` | `Players` | `[]PlayerState` | 结束时玩家权威状态 |
+
+## 16. ErrorResponse 字段
 
 类型是 `MsgError`。构造位置是 [../service/server.go](../service/server.go) `sendError`。
 

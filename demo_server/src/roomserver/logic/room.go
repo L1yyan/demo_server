@@ -19,11 +19,12 @@ const (
 )
 
 type roomEvent struct {
-	typeID   roomEventType
-	player   *Player
-	playerID uint64
-	input    protocol.PlayerInput
-	batch    protocol.PlayerInputBatch
+	typeID       roomEventType
+	player       *Player
+	playerID     uint64
+	input        protocol.PlayerInput
+	batch        protocol.PlayerInputBatch
+	joinReserved bool
 }
 
 const (
@@ -35,27 +36,38 @@ const (
 	inputDiagnosticRescheduleDropped = "reschedule_dropped"
 	inputDiagnosticIntervalTicks     = 20
 	lateInputCorrectionDelayTicks    = 3
+	defaultGameDuration              = 3 * time.Minute
+	gameOverReasonTimeLimit          = "time_limit"
 )
 
 // Room 单局房间
 type Room struct {
-	id             string
-	maxPlayers     int
-	tickRate       int
-	snapshotRate   int
-	syncConfig     SyncConfig
-	syncMode       string
-	mapID          string
-	physicsHash    string
-	currentTick    atomic.Int64
-	aoi            AOIFilter
-	physics        PhysicsWorld
-	events         chan roomEvent
-	stop           chan struct{}
-	players        map[uint64]*Player
-	syncStates     map[uint64]*playerSyncState
-	tick           int64
-	lastSnapshotAt int64
+	id                string
+	maxPlayers        int
+	tickRate          int
+	snapshotRate      int
+	syncConfig        SyncConfig
+	syncMode          string
+	mapID             string
+	physicsHash       string
+	gameDuration      time.Duration
+	gameDurationTicks int64
+	gameStarted       bool
+	gameEnded         bool
+	gameStartTick     int64
+	gameEndTick       int64
+	onFinished        func(room *Room, playerIDs []uint64)
+	joinClosed        atomic.Bool
+	joinSlots         atomic.Int64
+	currentTick       atomic.Int64
+	aoi               AOIFilter
+	physics           PhysicsWorld
+	events            chan roomEvent
+	stop              chan struct{}
+	players           map[uint64]*Player
+	syncStates        map[uint64]*playerSyncState
+	tick              int64
+	lastSnapshotAt    int64
 }
 
 // NewRoom 创建房间
@@ -65,6 +77,14 @@ func NewRoom(id string, maxPlayers int, tickRate int, snapshotRate int, aoi AOIF
 
 // NewRoomWithSync 创建带同步配置的房间
 func NewRoomWithSync(id string, maxPlayers int, tickRate int, snapshotRate int, aoi AOIFilter, physics PhysicsWorld, syncConfig SyncConfig, mapID string, physicsHash string) *Room {
+	return NewRoomWithOptions(id, maxPlayers, tickRate, snapshotRate, aoi, physics, syncConfig, mapID, physicsHash, defaultGameDuration, nil)
+}
+
+// NewRoomWithOptions 创建带完整运行参数的房间
+func NewRoomWithOptions(id string, maxPlayers int, tickRate int, snapshotRate int, aoi AOIFilter, physics PhysicsWorld, syncConfig SyncConfig, mapID string, physicsHash string, gameDuration time.Duration, onFinished func(room *Room, playerIDs []uint64)) *Room {
+	if maxPlayers <= 0 {
+		maxPlayers = 2
+	}
 	if tickRate <= 0 {
 		tickRate = 20
 	}
@@ -77,27 +97,49 @@ func NewRoomWithSync(id string, maxPlayers int, tickRate int, snapshotRate int, 
 	if physics == nil {
 		physics = NewSimplePhysicsWorld()
 	}
+	if gameDuration <= 0 {
+		gameDuration = defaultGameDuration
+	}
+	gameDurationTicks := durationToTicks(gameDuration, tickRate)
 	syncConfig = syncConfig.Normalize(tickRate)
 	syncMode := SyncModeSnapshotOnly
 	if syncConfig.PredictionEnabled {
 		syncMode = SyncModePredictionAuthoritative
 	}
 	return &Room{
-		id:           id,
-		maxPlayers:   maxPlayers,
-		tickRate:     tickRate,
-		snapshotRate: snapshotRate,
-		syncConfig:   syncConfig,
-		syncMode:     syncMode,
-		mapID:        mapID,
-		physicsHash:  physicsHash,
-		aoi:          aoi,
-		physics:      physics,
-		events:       make(chan roomEvent, 256),
-		stop:         make(chan struct{}),
-		players:      make(map[uint64]*Player),
-		syncStates:   make(map[uint64]*playerSyncState),
+		id:                id,
+		maxPlayers:        maxPlayers,
+		tickRate:          tickRate,
+		snapshotRate:      snapshotRate,
+		syncConfig:        syncConfig,
+		syncMode:          syncMode,
+		mapID:             mapID,
+		physicsHash:       physicsHash,
+		gameDuration:      gameDuration,
+		gameDurationTicks: gameDurationTicks,
+		onFinished:        onFinished,
+		aoi:               aoi,
+		physics:           physics,
+		events:            make(chan roomEvent, 256),
+		stop:              make(chan struct{}),
+		players:           make(map[uint64]*Player),
+		syncStates:        make(map[uint64]*playerSyncState),
 	}
+}
+
+// durationToTicks 将对局时长转换为房间逻辑帧数
+func durationToTicks(duration time.Duration, tickRate int) int64 {
+	if duration <= 0 {
+		duration = defaultGameDuration
+	}
+	if tickRate <= 0 {
+		tickRate = 20
+	}
+	ticks := int64(duration * time.Duration(tickRate) / time.Second)
+	if ticks <= 0 {
+		return 1
+	}
+	return ticks
 }
 
 // ID 返回房间ID
@@ -127,12 +169,33 @@ func (r *Room) Stop() {
 
 // Join 投递玩家加入事件
 func (r *Room) Join(player *Player) bool {
-	return r.pushEvent(roomEvent{typeID: roomEventJoin, player: player})
+	if player == nil || r.joinClosed.Load() {
+		return false
+	}
+	// 预占入房名额，避免并发入房在房间事件串行处理前超发
+	joinedSlots := r.joinSlots.Add(1)
+	if joinedSlots > int64(r.maxPlayers) {
+		r.joinSlots.Add(-1)
+		return false
+	}
+	if ok := r.pushEvent(roomEvent{typeID: roomEventJoin, player: player, joinReserved: true}); !ok {
+		r.joinSlots.Add(-1)
+		return false
+	}
+	return true
 }
 
 // Leave 投递玩家离开事件
 func (r *Room) Leave(playerID uint64) bool {
 	return r.pushEvent(roomEvent{typeID: roomEventLeave, playerID: playerID})
+}
+
+// IsJoinClosed 判断房间是否已关闭入房
+func (r *Room) IsJoinClosed() bool {
+	if r == nil {
+		return true
+	}
+	return r.joinClosed.Load()
 }
 
 // PushInput 投递玩家输入事件
@@ -182,7 +245,9 @@ func (r *Room) loop(ctx context.Context) {
 		case event := <-r.events:
 			r.handleEvent(ctx, event)
 		case <-ticker.C:
-			r.update(ctx)
+			if r.update(ctx) {
+				return
+			}
 		}
 	}
 }
@@ -191,7 +256,7 @@ func (r *Room) loop(ctx context.Context) {
 func (r *Room) handleEvent(ctx context.Context, event roomEvent) {
 	switch event.typeID {
 	case roomEventJoin:
-		r.handleJoin(ctx, event.player)
+		r.handleJoinEvent(ctx, event)
 	case roomEventLeave:
 		r.handleLeave(ctx, event.playerID)
 	case roomEventInput:
@@ -203,7 +268,28 @@ func (r *Room) handleEvent(ctx context.Context, event roomEvent) {
 
 // handleJoin 处理玩家加入房间
 func (r *Room) handleJoin(ctx context.Context, player *Player) {
+	r.handleJoinEvent(ctx, roomEvent{player: player})
+}
+
+// handleJoinEvent 处理玩家加入房间事件
+func (r *Room) handleJoinEvent(ctx context.Context, event roomEvent) {
+	player := event.player
 	if player == nil {
+		return
+	}
+	joined := false
+	defer func() {
+		if event.joinReserved {
+			if !joined {
+				r.releaseJoinSlot()
+			}
+			return
+		}
+		r.reconcileJoinSlots()
+	}()
+	if r.gameStarted || r.gameEnded {
+		message, _ := protocol.NewJSONMessage(protocol.MsgJoinRoomAck, r.buildJoinAck(false, nil, "game already started"))
+		player.Session.Send(message)
 		return
 	}
 	if len(r.players) >= r.maxPlayers {
@@ -243,10 +329,34 @@ func (r *Room) handleJoin(ctx context.Context, player *Player) {
 	r.players[player.ID] = player
 	r.syncStates[player.ID] = newPlayerSyncState()
 	r.saveAuthoritativeState(player.ID, player)
+	joined = true
 
+	shouldBroadcastGameStart := false
+	if len(r.players) >= r.maxPlayers {
+		shouldBroadcastGameStart = r.markGameStarted(ctx)
+	}
 	message, _ := protocol.NewJSONMessage(protocol.MsgJoinRoomAck, r.buildJoinAck(true, player, "ok"))
 	player.Session.Send(message)
 	glog.Info(ctx, "player joined room", glog.String("room_id", r.id), glog.Uint64("player_id", player.ID))
+	if shouldBroadcastGameStart {
+		r.broadcastGameStart(ctx)
+	}
+}
+
+// releaseJoinSlot 释放失败入房事件的预占名额
+func (r *Room) releaseJoinSlot() {
+	if r == nil || r.joinSlots.Load() <= 0 {
+		return
+	}
+	r.joinSlots.Add(-1)
+}
+
+// reconcileJoinSlots 同步入房预占位和房间真实人数
+func (r *Room) reconcileJoinSlots() {
+	if r == nil {
+		return
+	}
+	r.joinSlots.Store(int64(len(r.players)))
 }
 
 // playerSyncMode 判断玩家实际使用的同步模式
@@ -258,6 +368,29 @@ func (r *Room) playerSyncMode(player *Player) string {
 		return SyncModeSnapshotOnly
 	}
 	return SyncModePredictionAuthoritative
+}
+
+// gameDurationSeconds 返回对局时长秒数
+func (r *Room) gameDurationSeconds() int64 {
+	seconds := int64(r.gameDuration / time.Second)
+	if seconds <= 0 {
+		return int64(defaultGameDuration / time.Second)
+	}
+	return seconds
+}
+
+// markGameStarted 标记房间进入倒计时状态
+func (r *Room) markGameStarted(ctx context.Context) bool {
+	if r.gameStarted || r.gameEnded {
+		return false
+	}
+	r.gameStarted = true
+	r.joinClosed.Store(true)
+	r.joinSlots.Store(int64(r.maxPlayers))
+	r.gameStartTick = r.tick
+	r.gameEndTick = r.tick + r.gameDurationTicks
+	glog.Info(ctx, "room game started", glog.String("room_id", r.id), glog.Int64("start_tick", r.gameStartTick), glog.Int64("end_tick", r.gameEndTick), glog.Int64("duration_seconds", r.gameDurationSeconds()))
+	return true
 }
 
 // buildJoinAck 构造加入房间响应
@@ -280,6 +413,10 @@ func (r *Room) buildJoinAck(ok bool, player *Player, content string) protocol.Jo
 		PositionTolerance:          r.syncConfig.PositionTolerance,
 		HardPositionTolerance:      r.syncConfig.HardPositionTolerance,
 		AngleTolerance:             r.syncConfig.AngleTolerance,
+		GameDurationSeconds:        r.gameDurationSeconds(),
+		GameStarted:                r.gameStarted,
+		GameStartTick:              r.gameStartTick,
+		GameEndTick:                r.gameEndTick,
 	}
 	if player != nil {
 		if player.SyncMode == "" {
@@ -320,6 +457,92 @@ func (r *Room) nextSpawnPoint() (SpawnPoint, bool) {
 	return SpawnPoint{}, false
 }
 
+// broadcastGameStart 广播对局开始通知
+func (r *Room) broadcastGameStart(ctx context.Context) {
+	message, err := protocol.NewJSONMessage(protocol.MsgGameStart, protocol.GameStart{
+		RoomID:          r.id,
+		ServerTick:      r.tick,
+		StartTick:       r.gameStartTick,
+		EndTick:         r.gameEndTick,
+		DurationSeconds: r.gameDurationSeconds(),
+		ServerTime:      time.Now().UnixMilli(),
+	})
+	if err != nil {
+		glog.Error(ctx, "build game start failed", glog.String("room_id", r.id), glog.Err(err))
+		return
+	}
+	for _, player := range r.players {
+		if player == nil {
+			continue
+		}
+		player.Session.Send(message)
+	}
+}
+
+// shouldFinishGame 判断本局是否已达到限时
+func (r *Room) shouldFinishGame() bool {
+	return r.gameStarted && !r.gameEnded && r.gameEndTick > 0 && r.tick >= r.gameEndTick
+}
+
+// finishGame 广播对局结束并触发房间清理
+func (r *Room) finishGame(ctx context.Context) {
+	if r.gameEnded {
+		return
+	}
+	r.gameEnded = true
+	r.joinClosed.Store(true)
+	r.broadcastGameOver(ctx)
+	playerIDs := r.playerIDs()
+	if r.onFinished != nil {
+		r.onFinished(r, playerIDs)
+	}
+	glog.Info(ctx, "room game ended", glog.String("room_id", r.id), glog.Int64("server_tick", r.tick), glog.Int("player_count", len(playerIDs)), glog.String("reason", gameOverReasonTimeLimit))
+}
+
+// broadcastGameOver 广播对局结束通知
+func (r *Room) broadcastGameOver(ctx context.Context) {
+	message, err := protocol.NewJSONMessage(protocol.MsgGameOver, protocol.GameOver{
+		RoomID:     r.id,
+		ServerTick: r.tick,
+		StartTick:  r.gameStartTick,
+		EndTick:    r.gameEndTick,
+		Reason:     gameOverReasonTimeLimit,
+		ServerTime: time.Now().UnixMilli(),
+		Players:    r.playerStates(),
+	})
+	if err != nil {
+		glog.Error(ctx, "build game over failed", glog.String("room_id", r.id), glog.Err(err))
+		return
+	}
+	for _, player := range r.players {
+		if player == nil {
+			continue
+		}
+		player.Session.Send(message)
+	}
+}
+
+// playerIDs 返回当前房间玩家ID列表
+func (r *Room) playerIDs() []uint64 {
+	ids := make([]uint64, 0, len(r.players))
+	for playerID := range r.players {
+		ids = append(ids, playerID)
+	}
+	return ids
+}
+
+// playerStates 返回当前房间玩家状态列表
+func (r *Room) playerStates() []protocol.PlayerState {
+	states := make([]protocol.PlayerState, 0, len(r.players))
+	for _, player := range r.players {
+		if player == nil {
+			continue
+		}
+		states = append(states, player.ToState())
+	}
+	return states
+}
+
 // handleLeave 处理玩家离开房间
 func (r *Room) handleLeave(ctx context.Context, playerID uint64) {
 	if _, exists := r.players[playerID]; !exists {
@@ -327,6 +550,7 @@ func (r *Room) handleLeave(ctx context.Context, playerID uint64) {
 	}
 	delete(r.players, playerID)
 	delete(r.syncStates, playerID)
+	r.reconcileJoinSlots()
 	if err := r.physics.RemovePlayer(playerID); err != nil {
 		glog.Warn(ctx, "remove physics player failed", glog.String("room_id", r.id), glog.Uint64("player_id", playerID), glog.Err(err))
 	}
@@ -335,6 +559,9 @@ func (r *Room) handleLeave(ctx context.Context, playerID uint64) {
 
 // handleInput 处理旧单帧玩家输入
 func (r *Room) handleInput(ctx context.Context, playerID uint64, input protocol.PlayerInput) {
+	if r.gameEnded {
+		return
+	}
 	syncState := r.ensureSyncState(playerID)
 	targetTick := input.ClientTick
 	if targetTick <= syncState.lastAppliedTick || targetTick < r.tick-r.syncConfig.RollbackWindowTicks || targetTick > r.tick+r.syncConfig.FutureInputWindowTicks {
@@ -356,6 +583,9 @@ func (r *Room) handleInput(ctx context.Context, playerID uint64, input protocol.
 
 // handleInputBatch 处理批量玩家输入
 func (r *Room) handleInputBatch(ctx context.Context, playerID uint64, batch protocol.PlayerInputBatch) {
+	if r.gameEnded {
+		return
+	}
 	player, exists := r.players[playerID]
 	if !exists || player == nil || !player.Alive {
 		return
@@ -492,24 +722,32 @@ func (r *Room) logInputDiagnostic(ctx context.Context, syncState *playerSyncStat
 	)
 }
 
-// update 更新房间状态并按频率广播快照
-func (r *Room) update(ctx context.Context) {
+// update 更新房间状态并按频率广播快照，返回 true 表示房间已结束
+func (r *Room) update(ctx context.Context) bool {
+	if r.gameEnded {
+		return true
+	}
 	r.tick++
 	r.currentTick.Store(r.tick)
 	r.updatePlayers(ctx)
+	if r.shouldFinishGame() {
+		r.finishGame(ctx)
+		return true
+	}
 	if r.snapshotRate <= 0 {
-		return
+		return false
 	}
 	intervalTicks := int64(r.tickRate / r.snapshotRate)
 	if intervalTicks <= 0 {
 		intervalTicks = 1
 	}
 	if r.tick-r.lastSnapshotAt < intervalTicks {
-		return
+		return false
 	}
 	r.lastSnapshotAt = r.tick
 	r.broadcastAcks(ctx)
 	r.broadcastSnapshots(ctx)
+	return false
 }
 
 // updatePlayers 按服务端固定 tick 推进玩家权威状态

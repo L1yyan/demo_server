@@ -33,6 +33,10 @@ const (
 	MsgInputAck uint16 = 9
 	// MsgStateCorrection 权威状态纠偏
 	MsgStateCorrection uint16 = 10
+	// MsgGameStart 对局开始通知
+	MsgGameStart uint16 = 11
+	// MsgGameOver 对局结束通知
+	MsgGameOver uint16 = 12
 )
 
 var (
@@ -80,6 +84,10 @@ type JoinRoomAck struct {
 	PositionTolerance          float64 `json:"position_tolerance"`           // 位置误差阈值
 	HardPositionTolerance      float64 `json:"hard_position_tolerance"`      // 硬纠偏位置阈值
 	AngleTolerance             float64 `json:"angle_tolerance"`              // 角度误差阈值
+	GameDurationSeconds        int64   `json:"game_duration_seconds"`        // 对局时长秒数
+	GameStarted                bool    `json:"game_started"`                 // 是否已开始对局
+	GameStartTick              int64   `json:"game_start_tick"`              // 对局开始帧号
+	GameEndTick                int64   `json:"game_end_tick"`                // 对局结束帧号
 }
 
 // Heartbeat 心跳消息
@@ -162,6 +170,27 @@ type StateCorrection struct {
 	Reason                string      `json:"reason"`                   // 纠偏原因
 	PositionError         float64     `json:"position_error"`           // 位置误差
 	AngleError            float64     `json:"angle_error"`              // 角度误差
+}
+
+// GameStart 对局开始通知
+type GameStart struct {
+	RoomID          string `json:"room_id"`          // 房间ID
+	ServerTick      int64  `json:"server_tick"`      // 服务端当前帧号
+	StartTick       int64  `json:"start_tick"`       // 对局开始帧号
+	EndTick         int64  `json:"end_tick"`         // 对局结束帧号
+	DurationSeconds int64  `json:"duration_seconds"` // 对局时长秒数
+	ServerTime      int64  `json:"server_time"`      // 服务端时间戳
+}
+
+// GameOver 对局结束通知
+type GameOver struct {
+	RoomID     string        `json:"room_id"`     // 房间ID
+	ServerTick int64         `json:"server_tick"` // 服务端当前帧号
+	StartTick  int64         `json:"start_tick"`  // 对局开始帧号
+	EndTick    int64         `json:"end_tick"`    // 对局结束帧号
+	Reason     string        `json:"reason"`      // 结束原因
+	ServerTime int64         `json:"server_time"` // 服务端时间戳
+	Players    []PlayerState `json:"players"`     // 结束时玩家状态
 }
 
 // ErrorResponse 错误响应

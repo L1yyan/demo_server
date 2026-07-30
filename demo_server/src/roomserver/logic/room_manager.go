@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"demo_server/src/roomserver/protocol"
 )
@@ -13,6 +14,8 @@ var (
 	ErrRoomLimitReached = errors.New("room limit reached")
 	// ErrRoomEventQueueFull 表示房间事件队列已满
 	ErrRoomEventQueueFull = errors.New("room event queue full")
+	// ErrRoomAlreadyStarted 表示房间已开始或已结束，不能再加入
+	ErrRoomAlreadyStarted = errors.New("game already started")
 )
 
 // RoomManager 房间管理器
@@ -28,6 +31,7 @@ type RoomManager struct {
 	syncConfig        SyncConfig
 	mapID             string
 	physicsHash       string
+	gameDuration      time.Duration
 	aoi               AOIFilter
 	physicsFactory    PhysicsWorldFactory
 }
@@ -39,6 +43,11 @@ func NewRoomManager(ctx context.Context, maxRooms int, maxPlayersPerRoom int, ti
 
 // NewRoomManagerWithSync 创建带同步配置的房间管理器
 func NewRoomManagerWithSync(ctx context.Context, maxRooms int, maxPlayersPerRoom int, tickRate int, snapshotRate int, syncConfig SyncConfig, mapID string, physicsHash string, aoi AOIFilter, physicsFactory PhysicsWorldFactory) *RoomManager {
+	return NewRoomManagerWithOptions(ctx, maxRooms, maxPlayersPerRoom, tickRate, snapshotRate, syncConfig, mapID, physicsHash, defaultGameDuration, aoi, physicsFactory)
+}
+
+// NewRoomManagerWithOptions 创建带完整运行参数的房间管理器
+func NewRoomManagerWithOptions(ctx context.Context, maxRooms int, maxPlayersPerRoom int, tickRate int, snapshotRate int, syncConfig SyncConfig, mapID string, physicsHash string, gameDuration time.Duration, aoi AOIFilter, physicsFactory PhysicsWorldFactory) *RoomManager {
 	if maxRooms <= 0 {
 		maxRooms = 1000
 	}
@@ -65,6 +74,7 @@ func NewRoomManagerWithSync(ctx context.Context, maxRooms int, maxPlayersPerRoom
 		syncConfig:        syncConfig.Normalize(tickRate),
 		mapID:             mapID,
 		physicsHash:       physicsHash,
+		gameDuration:      gameDuration,
 		aoi:               aoi,
 		physicsFactory:    physicsFactory,
 	}
@@ -79,7 +89,13 @@ func (m *RoomManager) JoinRoom(roomID string, player *Player) error {
 	if err != nil {
 		return err
 	}
+	if room.IsJoinClosed() {
+		return ErrRoomAlreadyStarted
+	}
 	if ok := room.Join(player); !ok {
+		if room.IsJoinClosed() {
+			return ErrRoomAlreadyStarted
+		}
 		return ErrRoomEventQueueFull
 	}
 
@@ -186,8 +202,25 @@ func (m *RoomManager) getOrCreateRoom(roomID string) (*Room, error) {
 	if err != nil {
 		return nil, err
 	}
-	room = NewRoomWithSync(roomID, m.maxPlayersPerRoom, m.tickRate, m.snapshotRate, m.aoi, physicsWorld, m.syncConfig, m.mapID, m.physicsHash)
+	room = NewRoomWithOptions(roomID, m.maxPlayersPerRoom, m.tickRate, m.snapshotRate, m.aoi, physicsWorld, m.syncConfig, m.mapID, m.physicsHash, m.gameDuration, m.finishRoom)
 	room.Start(m.ctx)
 	m.rooms[roomID] = room
 	return room, nil
+}
+
+// finishRoom 清理已结束房间索引
+func (m *RoomManager) finishRoom(room *Room, playerIDs []uint64) {
+	if room == nil {
+		return
+	}
+	m.mu.Lock()
+	if m.rooms[room.ID()] == room {
+		delete(m.rooms, room.ID())
+	}
+	for playerID, roomID := range m.playerRooms {
+		if roomID == room.ID() {
+			delete(m.playerRooms, playerID)
+		}
+	}
+	m.mu.Unlock()
 }
