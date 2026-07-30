@@ -38,10 +38,11 @@ type MovePlayerResult struct {
 
 // RaycastRequest 射线检测请求
 type RaycastRequest struct {
-	Origin      Vector3 // 射线起点
-	Direction   Vector3 // 射线方向
-	MaxDistance float64 // 最大检测距离
-	Mask        uint32  // 碰撞过滤掩码
+	Origin         Vector3 // 射线起点
+	Direction      Vector3 // 射线方向
+	MaxDistance    float64 // 最大检测距离
+	Mask           uint32  // 碰撞过滤掩码
+	IgnorePlayerID uint64  // 忽略的玩家ID
 }
 
 // RaycastHit 射线检测结果
@@ -196,18 +197,101 @@ func (w *SimplePhysicsWorld) Raycast(req RaycastRequest) (RaycastHit, error) {
 	if !validRaycastRequest(req) {
 		return RaycastHit{}, ErrInvalidPhysicsRequest
 	}
-	return RaycastHit{}, nil
+	direction, ok := normalizedVector(req.Direction)
+	if !ok {
+		return RaycastHit{}, ErrInvalidPhysicsRequest
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return RaycastHit{}, ErrPhysicsWorldClosed
+	}
+
+	closestDistance := req.MaxDistance + 1
+	var closest RaycastHit
+	for playerID, position := range w.players {
+		if playerID == req.IgnorePlayerID {
+			continue
+		}
+
+		// simple 后端用玩家胶囊体中点球体近似命中体，真实遮挡交给 PhysX 后端
+		center := Vector3{X: position.X, Y: position.Y + defaultPlayerCapsuleHeight*0.5, Z: position.Z}
+		distance, hit := raySphereDistance(req.Origin, direction, center, defaultPlayerCapsuleRadius, req.MaxDistance)
+		if !hit || distance >= closestDistance {
+			continue
+		}
+		point := rayPoint(req.Origin, direction, distance)
+		normal, _ := normalizedVector(subVector(point, center))
+		closestDistance = distance
+		closest = RaycastHit{Hit: true, TargetID: playerID, Point: point, Normal: normal, Distance: distance}
+	}
+	return closest, nil
 }
 
 // BatchRaycast 批量执行射线检测
 func (w *SimplePhysicsWorld) BatchRaycast(reqs []RaycastRequest) ([]RaycastHit, error) {
 	hits := make([]RaycastHit, len(reqs))
-	for _, req := range reqs {
-		if !validRaycastRequest(req) {
-			return nil, ErrInvalidPhysicsRequest
+	for index, req := range reqs {
+		hit, err := w.Raycast(req)
+		if err != nil {
+			return nil, err
 		}
+		hits[index] = hit
 	}
 	return hits, nil
+}
+
+// raySphereDistance 计算射线命中球体的最近距离
+func raySphereDistance(origin Vector3, direction Vector3, center Vector3, radius float64, maxDistance float64) (float64, bool) {
+	if radius <= 0 || maxDistance <= 0 {
+		return 0, false
+	}
+	oc := subVector(origin, center)
+	b := dotVector(oc, direction)
+	c := dotVector(oc, oc) - radius*radius
+	discriminant := b*b - c
+	if discriminant < 0 {
+		return 0, false
+	}
+
+	sqrtDiscriminant := math.Sqrt(discriminant)
+	distance := -b - sqrtDiscriminant
+	if distance < 0 {
+		distance = -b + sqrtDiscriminant
+	}
+	if distance < 0 || distance > maxDistance {
+		return 0, false
+	}
+	return distance, true
+}
+
+// rayPoint 计算射线上指定距离的点
+func rayPoint(origin Vector3, direction Vector3, distance float64) Vector3 {
+	return Vector3{
+		X: origin.X + direction.X*distance,
+		Y: origin.Y + direction.Y*distance,
+		Z: origin.Z + direction.Z*distance,
+	}
+}
+
+// subVector 计算两个向量差值
+func subVector(a Vector3, b Vector3) Vector3 {
+	return Vector3{X: a.X - b.X, Y: a.Y - b.Y, Z: a.Z - b.Z}
+}
+
+// dotVector 计算两个向量点积
+func dotVector(a Vector3, b Vector3) float64 {
+	return a.X*b.X + a.Y*b.Y + a.Z*b.Z
+}
+
+// normalizedVector 返回单位向量
+func normalizedVector(value Vector3) (Vector3, bool) {
+	length := vectorLength(value)
+	if length <= 0 {
+		return Vector3{}, false
+	}
+	return Vector3{X: value.X / length, Y: value.Y / length, Z: value.Z / length}, true
 }
 
 // Close 释放简化物理世界

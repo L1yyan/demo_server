@@ -37,6 +37,10 @@ const (
 	MsgGameStart uint16 = 11
 	// MsgGameOver 对局结束通知
 	MsgGameOver uint16 = 12
+	// MsgPlayerStatsQuery 查询玩家战绩
+	MsgPlayerStatsQuery uint16 = 13
+	// MsgPlayerStatsResp 玩家战绩响应
+	MsgPlayerStatsResp uint16 = 14
 )
 
 var (
@@ -137,14 +141,16 @@ type PredictedPlayerState struct {
 
 // PlayerState 玩家快照状态
 type PlayerState struct {
-	PlayerID uint64  `json:"player_id"` // 玩家ID
-	SpawnID  string  `json:"spawn_id"`  // 出生点ID
-	X        float64 `json:"x"`         // X坐标
-	Y        float64 `json:"y"`         // Y坐标
-	Z        float64 `json:"z"`         // Z坐标
-	Yaw      float64 `json:"yaw"`       // 水平视角
-	Pitch    float64 `json:"pitch"`     // 垂直视角
-	HP       int     `json:"hp"`        // 生命值
+	PlayerID   uint64  `json:"player_id"`   // 玩家ID
+	SpawnID    string  `json:"spawn_id"`    // 出生点ID
+	X          float64 `json:"x"`           // X坐标
+	Y          float64 `json:"y"`           // Y坐标
+	Z          float64 `json:"z"`           // Z坐标
+	Yaw        float64 `json:"yaw"`         // 水平视角
+	Pitch      float64 `json:"pitch"`       // 垂直视角
+	HP         int     `json:"hp"`          // 生命值
+	KillCount  int     `json:"kill_count"`  // 击杀数量
+	DeathCount int     `json:"death_count"` // 死亡数量
 }
 
 // Snapshot 状态快照
@@ -191,6 +197,27 @@ type GameOver struct {
 	Reason     string        `json:"reason"`      // 结束原因
 	ServerTime int64         `json:"server_time"` // 服务端时间戳
 	Players    []PlayerState `json:"players"`     // 结束时玩家状态
+}
+
+// PlayerStatsQuery 玩家战绩查询请求
+type PlayerStatsQuery struct {
+	PlayerID uint64 `json:"player_id,omitempty"` // 目标玩家ID，为0时查询自己
+}
+
+// PlayerStats 玩家战绩数据
+type PlayerStats struct {
+	PlayerID   uint64 `json:"player_id"`   // 玩家ID
+	KillCount  int    `json:"kill_count"`  // 击杀数量
+	DeathCount int    `json:"death_count"` // 死亡数量
+}
+
+// PlayerStatsResp 玩家战绩查询响应
+type PlayerStatsResp struct {
+	OK         bool        `json:"ok"`          // 是否成功
+	Content    string      `json:"content"`     // 响应信息
+	RoomID     string      `json:"room_id"`     // 房间ID
+	ServerTick int64       `json:"server_tick"` // 服务端当前帧号
+	Stats      PlayerStats `json:"stats"`       // 玩家战绩
 }
 
 // ErrorResponse 错误响应

@@ -153,6 +153,15 @@ func (m *RoomManager) RoomTick(playerID uint64) int64 {
 	return room.Tick()
 }
 
+// QueryPlayerStats 查询同房间玩家战绩
+func (m *RoomManager) QueryPlayerStats(requesterID uint64, targetID uint64) (PlayerStatsSnapshot, error) {
+	room, err := m.playerRoom(requesterID)
+	if err != nil {
+		return PlayerStatsSnapshot{}, err
+	}
+	return room.QueryPlayerStats(requesterID, targetID)
+}
+
 // Stop 停止所有房间
 func (m *RoomManager) Stop() {
 	m.mu.RLock()

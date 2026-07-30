@@ -210,7 +210,7 @@ func (w *World) Raycast(req logic.RaycastRequest) (logic.RaycastHit, error) {
 	defer C.free(unsafe.Pointer(errBuf))
 
 	var outHit C.CRaycastHit
-	code := C.px_world_raycast(w.ptr, toCVec3(req.Origin), toCVec3(req.Direction), C.double(req.MaxDistance), C.uint32_t(req.Mask), &outHit, errBuf, cErrorBufferSize)
+	code := C.px_world_raycast(w.ptr, toCVec3(req.Origin), toCVec3(req.Direction), C.double(req.MaxDistance), C.uint32_t(req.Mask), C.uint64_t(req.IgnorePlayerID), &outHit, errBuf, cErrorBufferSize)
 	if code != 0 {
 		return logic.RaycastHit{}, cError(errBuf, "physx raycast")
 	}
@@ -230,18 +230,20 @@ func (w *World) BatchRaycast(reqs []logic.RaycastRequest) ([]logic.RaycastHit, e
 	directions := make([]C.CVec3, len(reqs))
 	maxDistances := make([]C.double, len(reqs))
 	masks := make([]C.uint32_t, len(reqs))
+	ignoredPlayerIDs := make([]C.uint64_t, len(reqs))
 	outHits := make([]C.CRaycastHit, len(reqs))
 	for i, req := range reqs {
 		origins[i] = toCVec3(req.Origin)
 		directions[i] = toCVec3(req.Direction)
 		maxDistances[i] = C.double(req.MaxDistance)
 		masks[i] = C.uint32_t(req.Mask)
+		ignoredPlayerIDs[i] = C.uint64_t(req.IgnorePlayerID)
 	}
 
 	errBuf := newCErrorBuffer()
 	defer C.free(unsafe.Pointer(errBuf))
 
-	code := C.px_world_batch_raycast(w.ptr, &origins[0], &directions[0], &maxDistances[0], &masks[0], C.int(len(reqs)), &outHits[0], errBuf, cErrorBufferSize)
+	code := C.px_world_batch_raycast(w.ptr, &origins[0], &directions[0], &maxDistances[0], &masks[0], &ignoredPlayerIDs[0], C.int(len(reqs)), &outHits[0], errBuf, cErrorBufferSize)
 	if code != 0 {
 		return nil, cError(errBuf, "physx batch raycast")
 	}

@@ -87,14 +87,17 @@ func TestRoomJoinReusesFreedSpawnPoint(t *testing.T) {
 	}
 }
 
-// TestPlayerStateIncludesSpawnID 验证快照玩家状态携带出生点ID
+// TestPlayerStateIncludesSpawnID 验证快照玩家状态携带出生点ID和战绩
 func TestPlayerStateIncludesSpawnID(t *testing.T) {
-	player := &Player{ID: 1, SpawnID: defaultSpawnAID, X: -4, Y: 0.1, Z: 0, HP: 100}
+	player := &Player{ID: 1, SpawnID: defaultSpawnAID, X: -4, Y: 0.1, Z: 0, HP: 100, KillCount: 2, DeathCount: 1}
 
 	state := player.ToState()
 
 	if state.SpawnID != defaultSpawnAID {
 		t.Fatalf("expected state spawn %s, got %s", defaultSpawnAID, state.SpawnID)
+	}
+	if state.KillCount != 2 || state.DeathCount != 1 {
+		t.Fatalf("unexpected state stats: kills %d deaths %d", state.KillCount, state.DeathCount)
 	}
 }
 

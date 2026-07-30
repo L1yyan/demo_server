@@ -54,6 +54,8 @@ const messageHeaderSize = 6
 | `MsgStateCorrection` | `10` | 服务端 -> 客户端 | `StateCorrection` | 权威状态纠偏 |
 | `MsgGameStart` | `11` | 服务端 -> 客户端 | `GameStart` | 对局开始通知 |
 | `MsgGameOver` | `12` | 服务端 -> 客户端 | `GameOver` | 对局结束通知 |
+| `MsgPlayerStatsQuery` | `13` | 客户端 -> 服务端 | `PlayerStatsQuery` | 查询玩家战绩 |
+| `MsgPlayerStatsResp` | `14` | 服务端 -> 客户端 | `PlayerStatsResp` | 玩家战绩响应 |
 
 [../../../pb/room/room.proto](../../../pb/room/room.proto) 也定义了同名业务结构，字段含义和当前 JSON payload 基本对应。当前 KCP 链路实际使用的是 [../protocol/message.go](../protocol/message.go) 里的 Go 结构体和 JSON 编码。
 
@@ -192,6 +194,8 @@ DecodeJSON
 | `yaw` | `Yaw` | `float64` | 服务端认可的水平视角 |
 | `pitch` | `Pitch` | `float64` | 服务端认可的垂直视角 |
 | `hp` | `HP` | `int` | 生命值 |
+| `kill_count` | `KillCount` | `int` | 击杀数量 |
+| `death_count` | `DeathCount` | `int` | 死亡数量 |
 
 `Snapshot`：
 
@@ -258,7 +262,37 @@ DecodeJSON
 | `server_time` | `ServerTime` | `int64` | 服务端时间戳，Unix 毫秒 |
 | `players` | `Players` | `[]PlayerState` | 结束时玩家权威状态 |
 
-## 16. ErrorResponse 字段
+## 16. PlayerStatsQuery 和 PlayerStatsResp 字段
+
+客户端发送 `MsgPlayerStatsQuery` 查询玩家战绩。处理位置是 [../service/server.go](../service/server.go) `handlePlayerStatsQuery`。
+
+`PlayerStatsQuery`：
+
+| JSON 字段 | Go 字段 | 类型 | 含义 |
+| --- | --- | --- | --- |
+| `player_id` | `PlayerID` | `uint64` | 目标玩家 ID，为 0 或不传时查询自己 |
+
+`PlayerStatsResp`：
+
+| JSON 字段 | Go 字段 | 类型 | 含义 |
+| --- | --- | --- | --- |
+| `ok` | `OK` | `bool` | 是否查询成功 |
+| `content` | `Content` | `string` | 响应说明 |
+| `room_id` | `RoomID` | `string` | 房间 ID |
+| `server_tick` | `ServerTick` | `int64` | 查询时房间服务端帧号 |
+| `stats` | `Stats` | `PlayerStats` | 玩家战绩 |
+
+`PlayerStats`：
+
+| JSON 字段 | Go 字段 | 类型 | 含义 |
+| --- | --- | --- | --- |
+| `player_id` | `PlayerID` | `uint64` | 玩家 ID |
+| `kill_count` | `KillCount` | `int` | 击杀数量 |
+| `death_count` | `DeathCount` | `int` | 死亡数量 |
+
+查询方必须已经入房。`player_id=0` 查询自己；指定玩家 ID 时只能查询当前房间内的玩家。
+
+## 17. ErrorResponse 字段
 
 类型是 `MsgError`。构造位置是 [../service/server.go](../service/server.go) `sendError`。
 

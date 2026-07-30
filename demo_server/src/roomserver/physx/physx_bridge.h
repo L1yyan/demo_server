@@ -38,8 +38,8 @@ int px_world_remove_player(px_world* world, uint64_t player_id, char* err, int e
 int px_world_move_player(px_world* world, uint64_t player_id, px_vec3 direction, double distance, double delta_time, px_vec3* out_position, int* out_blocked, char* err, int err_len);
 int px_world_get_player_position(px_world* world, uint64_t player_id, px_vec3* out_position, char* err, int err_len);
 int px_world_set_player_position(px_world* world, uint64_t player_id, px_vec3 position, char* err, int err_len);
-int px_world_raycast(px_world* world, px_vec3 origin, px_vec3 direction, double max_distance, uint32_t mask, px_raycast_hit* out_hit, char* err, int err_len);
-int px_world_batch_raycast(px_world* world, const px_vec3* origins, const px_vec3* directions, const double* max_distances, const uint32_t* masks, int count, px_raycast_hit* out_hits, char* err, int err_len);
+int px_world_raycast(px_world* world, px_vec3 origin, px_vec3 direction, double max_distance, uint32_t mask, uint64_t ignored_player_id, px_raycast_hit* out_hit, char* err, int err_len);
+int px_world_batch_raycast(px_world* world, const px_vec3* origins, const px_vec3* directions, const double* max_distances, const uint32_t* masks, const uint64_t* ignored_player_ids, int count, px_raycast_hit* out_hits, char* err, int err_len);
 
 #ifdef __cplusplus
 }

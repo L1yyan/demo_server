@@ -94,6 +94,8 @@ func (s *Server) HandleMessage(ctx context.Context, session *Session, message pr
 		s.handlePlayerInput(ctx, session, message)
 	case protocol.MsgPlayerInputBatch:
 		s.handlePlayerInputBatch(ctx, session, message)
+	case protocol.MsgPlayerStatsQuery:
+		s.handlePlayerStatsQuery(ctx, session, message)
 	default:
 		s.sendError(session, "unknown_message", "unknown message type")
 	}
@@ -191,6 +193,39 @@ func (s *Server) handleJoinRoom(ctx context.Context, session *Session, message p
 		s.sendError(session, "join_failed", err.Error())
 		return
 	}
+}
+
+// handlePlayerStatsQuery 处理玩家战绩查询
+func (s *Server) handlePlayerStatsQuery(ctx context.Context, session *Session, message protocol.Message) {
+	if session.PlayerID() == 0 {
+		s.sendError(session, "not_joined", "player not joined room")
+		return
+	}
+	if s.manager == nil {
+		s.sendError(session, "stats_failed", "room manager not started")
+		return
+	}
+
+	request := protocol.PlayerStatsQuery{}
+	if len(message.Payload) > 0 {
+		decoded, err := protocol.DecodeJSON[protocol.PlayerStatsQuery](message)
+		if err != nil {
+			s.sendError(session, "bad_request", "invalid player stats query")
+			return
+		}
+		request = decoded
+	}
+	statsSnapshot, err := s.manager.QueryPlayerStats(session.PlayerID(), request.PlayerID)
+	if err != nil {
+		glog.Warn(ctx, "query player stats failed", glog.String("session_id", session.ID()), glog.Uint64("player_id", session.PlayerID()), glog.Uint64("target_player_id", request.PlayerID), glog.Err(err))
+		s.sendError(session, "stats_failed", err.Error())
+		return
+	}
+	response, err := protocol.NewJSONMessage(protocol.MsgPlayerStatsResp, protocol.PlayerStatsResp{OK: true, Content: "ok", RoomID: statsSnapshot.RoomID, ServerTick: statsSnapshot.ServerTick, Stats: statsSnapshot.Stats})
+	if err != nil {
+		return
+	}
+	session.Send(response)
 }
 
 // handleHeartbeat 处理心跳

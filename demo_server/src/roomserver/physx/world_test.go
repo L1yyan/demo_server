@@ -56,6 +56,20 @@ func TestWorldMoveAndRaycast(t *testing.T) {
 	if hit.Distance <= 0 || hit.Distance > 10 {
 		t.Fatalf("unexpected hit distance: %.4f", hit.Distance)
 	}
+
+	// 射击查询需要忽略发起者自身，避免从视角位置直接命中自己
+	selfHit, err := world.Raycast(logic.RaycastRequest{
+		Origin:         logic.Vector3{X: 0, Y: 0.9, Z: 1},
+		Direction:      logic.Vector3{Z: 1},
+		MaxDistance:    10,
+		IgnorePlayerID: 1,
+	})
+	if err != nil {
+		t.Fatalf("raycast ignore self: %v", err)
+	}
+	if selfHit.Hit {
+		t.Fatalf("expected self ignored by raycast, got target %d", selfHit.TargetID)
+	}
 }
 
 // TestWorldSetGetPlayerPosition 验证 PhysX 后端支持玩家位置读写

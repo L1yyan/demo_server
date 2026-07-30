@@ -82,7 +82,7 @@ public:
     explicit IgnoreActorFilter(const PxRigidActor* ignored_actor) : ignored_actor_(ignored_actor) {}
 
     PxQueryHitType::Enum preFilter(const PxFilterData&, const PxShape*, const PxRigidActor* actor, PxHitFlags&) override {
-        if (actor == ignored_actor_) {
+        if (ignored_actor_ != nullptr && actor == ignored_actor_) {
             return PxQueryHitType::eNONE;
         }
         return PxQueryHitType::eBLOCK;
@@ -410,7 +410,7 @@ int px_world_set_player_position(px_world* world, uint64_t player_id, px_vec3 po
     return 0;
 }
 
-int px_world_raycast(px_world* world, px_vec3 origin, px_vec3 direction, double max_distance, uint32_t mask, px_raycast_hit* out_hit, char* err, int err_len) {
+int px_world_raycast(px_world* world, px_vec3 origin, px_vec3 direction, double max_distance, uint32_t mask, uint64_t ignored_player_id, px_raycast_hit* out_hit, char* err, int err_len) {
     if (world == nullptr || out_hit == nullptr) {
         set_error(err, err_len, "invalid raycast request");
         return 1;
@@ -428,9 +428,18 @@ int px_world_raycast(px_world* world, px_vec3 origin, px_vec3 direction, double 
     }
     dir /= length;
 
+    PxRigidActor* ignored_actor = nullptr;
+    if (ignored_player_id != 0) {
+        auto ignored_iter = world->players.find(ignored_player_id);
+        if (ignored_iter != world->players.end()) {
+            ignored_actor = ignored_iter->second.actor;
+        }
+    }
+
     PxRaycastBuffer hit;
-    PxQueryFilterData filter_data(PxQueryFlag::eSTATIC | PxQueryFlag::eDYNAMIC);
-    bool has_hit = world->scene->raycast(to_px_vec3(origin), dir, static_cast<PxReal>(max_distance), hit, PxHitFlag::eDEFAULT, filter_data);
+    PxQueryFilterData filter_data(PxQueryFlag::eSTATIC | PxQueryFlag::eDYNAMIC | PxQueryFlag::ePREFILTER);
+    IgnoreActorFilter filter_callback(ignored_actor);
+    bool has_hit = world->scene->raycast(to_px_vec3(origin), dir, static_cast<PxReal>(max_distance), hit, PxHitFlag::eDEFAULT, filter_data, &filter_callback);
     *out_hit = px_raycast_hit{};
     if (!has_hit || !hit.hasBlock) {
         return 0;
@@ -446,13 +455,13 @@ int px_world_raycast(px_world* world, px_vec3 origin, px_vec3 direction, double 
     return 0;
 }
 
-int px_world_batch_raycast(px_world* world, const px_vec3* origins, const px_vec3* directions, const double* max_distances, const uint32_t* masks, int count, px_raycast_hit* out_hits, char* err, int err_len) {
-    if (world == nullptr || origins == nullptr || directions == nullptr || max_distances == nullptr || masks == nullptr || out_hits == nullptr || count < 0) {
+int px_world_batch_raycast(px_world* world, const px_vec3* origins, const px_vec3* directions, const double* max_distances, const uint32_t* masks, const uint64_t* ignored_player_ids, int count, px_raycast_hit* out_hits, char* err, int err_len) {
+    if (world == nullptr || origins == nullptr || directions == nullptr || max_distances == nullptr || masks == nullptr || ignored_player_ids == nullptr || out_hits == nullptr || count < 0) {
         set_error(err, err_len, "invalid batch raycast request");
         return 1;
     }
     for (int i = 0; i < count; ++i) {
-        int code = px_world_raycast(world, origins[i], directions[i], max_distances[i], masks[i], &out_hits[i], err, err_len);
+        int code = px_world_raycast(world, origins[i], directions[i], max_distances[i], masks[i], ignored_player_ids[i], &out_hits[i], err, err_len);
         if (code != 0) {
             return code;
         }

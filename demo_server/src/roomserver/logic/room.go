@@ -2,6 +2,7 @@ package logic
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"time"
 
@@ -16,16 +17,38 @@ const (
 	roomEventLeave
 	roomEventInput
 	roomEventInputBatch
+	roomEventPlayerStatsQuery
 )
 
 type roomEvent struct {
 	typeID       roomEventType
 	player       *Player
 	playerID     uint64
+	targetID     uint64
 	input        protocol.PlayerInput
 	batch        protocol.PlayerInputBatch
+	statsResp    chan playerStatsQueryResult
 	joinReserved bool
 }
+
+// PlayerStatsSnapshot 玩家战绩查询快照
+type PlayerStatsSnapshot struct {
+	RoomID     string               // 房间ID
+	ServerTick int64                // 查询时房间帧号
+	Stats      protocol.PlayerStats // 玩家战绩
+}
+
+type playerStatsQueryResult struct {
+	snapshot PlayerStatsSnapshot
+	err      error
+}
+
+var (
+	// ErrPlayerStatsQueryTimeout 表示玩家战绩查询超时
+	ErrPlayerStatsQueryTimeout = errors.New("player stats query timeout")
+	// ErrPlayerStatsNotFound 表示玩家战绩不存在
+	ErrPlayerStatsNotFound = errors.New("player stats not found")
+)
 
 const (
 	inputDiagnosticAccepted          = "accepted"
@@ -37,6 +60,10 @@ const (
 	inputDiagnosticIntervalTicks     = 20
 	lateInputCorrectionDelayTicks    = 3
 	defaultGameDuration              = 3 * time.Minute
+	defaultFireDamage                = 20
+	defaultFireMaxDistance           = 100.0
+	defaultFireViewHeight            = 0.9
+	playerStatsQueryTimeout          = time.Second
 	gameOverReasonTimeLimit          = "time_limit"
 )
 
@@ -263,6 +290,8 @@ func (r *Room) handleEvent(ctx context.Context, event roomEvent) {
 		r.handleInput(ctx, event.playerID, event.input)
 	case roomEventInputBatch:
 		r.handleInputBatch(ctx, event.playerID, event.batch)
+	case roomEventPlayerStatsQuery:
+		r.handlePlayerStatsQuery(event)
 	}
 }
 
@@ -317,6 +346,8 @@ func (r *Room) handleJoinEvent(ctx context.Context, event roomEvent) {
 	player.Yaw = spawnPoint.Yaw
 	player.Pitch = 0
 	player.HP = 100
+	player.KillCount = 0
+	player.DeathCount = 0
 	player.SpawnID = spawnPoint.ID
 	player.Alive = true
 	player.SyncMode = r.playerSyncMode(player)
@@ -555,6 +586,59 @@ func (r *Room) handleLeave(ctx context.Context, playerID uint64) {
 		glog.Warn(ctx, "remove physics player failed", glog.String("room_id", r.id), glog.Uint64("player_id", playerID), glog.Err(err))
 	}
 	glog.Info(ctx, "player left room", glog.String("room_id", r.id), glog.Uint64("player_id", playerID))
+}
+
+// QueryPlayerStats 查询房间内玩家战绩
+func (r *Room) QueryPlayerStats(requesterID uint64, targetID uint64) (PlayerStatsSnapshot, error) {
+	if r == nil {
+		return PlayerStatsSnapshot{}, ErrPlayerStatsNotFound
+	}
+	if targetID == 0 {
+		targetID = requesterID
+	}
+	response := make(chan playerStatsQueryResult, 1)
+	if !r.pushEvent(roomEvent{typeID: roomEventPlayerStatsQuery, playerID: requesterID, targetID: targetID, statsResp: response}) {
+		return PlayerStatsSnapshot{}, ErrRoomEventQueueFull
+	}
+
+	select {
+	case result := <-response:
+		return result.snapshot, result.err
+	case <-r.stop:
+		return PlayerStatsSnapshot{}, ErrPlayerStatsQueryTimeout
+	case <-time.After(playerStatsQueryTimeout):
+		return PlayerStatsSnapshot{}, ErrPlayerStatsQueryTimeout
+	}
+}
+
+// handlePlayerStatsQuery 处理玩家战绩查询事件
+func (r *Room) handlePlayerStatsQuery(event roomEvent) {
+	if event.statsResp == nil {
+		return
+	}
+	snapshot, err := r.lookupPlayerStats(event.playerID, event.targetID)
+	select {
+	case event.statsResp <- playerStatsQueryResult{snapshot: snapshot, err: err}:
+	default:
+	}
+}
+
+// lookupPlayerStats 查询当前房间内玩家战绩
+func (r *Room) lookupPlayerStats(requesterID uint64, targetID uint64) (PlayerStatsSnapshot, error) {
+	if requesterID == 0 {
+		return PlayerStatsSnapshot{}, ErrPlayerStatsNotFound
+	}
+	if targetID == 0 {
+		targetID = requesterID
+	}
+	if _, exists := r.players[requesterID]; !exists {
+		return PlayerStatsSnapshot{}, ErrPlayerStatsNotFound
+	}
+	target := r.players[targetID]
+	if target == nil {
+		return PlayerStatsSnapshot{}, ErrPlayerStatsNotFound
+	}
+	return PlayerStatsSnapshot{RoomID: r.id, ServerTick: r.tick, Stats: target.ToStats()}, nil
 }
 
 // handleInput 处理旧单帧玩家输入
@@ -807,8 +891,61 @@ func (r *Room) simulatePlayerTick(ctx context.Context, player *Player, input aut
 		}
 	}
 	if hasExactInput && input.Fire {
-		_, _ = r.physics.Raycast(RaycastRequest{Origin: Vector3{X: player.X, Y: player.Y, Z: player.Z}, Direction: viewDirection(player.Yaw, player.Pitch), MaxDistance: 100})
+		r.handlePlayerFire(ctx, player)
 	}
+}
+
+// handlePlayerFire 处理玩家权威开火命中
+func (r *Room) handlePlayerFire(ctx context.Context, shooter *Player) {
+	if shooter == nil || !shooter.Alive {
+		return
+	}
+	hit, err := r.physics.Raycast(RaycastRequest{
+		Origin:         Vector3{X: shooter.X, Y: shooter.Y + defaultFireViewHeight, Z: shooter.Z},
+		Direction:      viewDirection(shooter.Yaw, shooter.Pitch),
+		MaxDistance:    defaultFireMaxDistance,
+		IgnorePlayerID: shooter.ID,
+	})
+	if err != nil {
+		glog.Warn(ctx, "player fire raycast failed", glog.String("room_id", r.id), glog.Uint64("player_id", shooter.ID), glog.Err(err))
+		return
+	}
+	if !hit.Hit || hit.TargetID == 0 || hit.TargetID == shooter.ID {
+		return
+	}
+
+	target := r.players[hit.TargetID]
+	if target == nil || !target.Alive {
+		return
+	}
+	r.applyFireDamage(ctx, shooter, target, hit)
+}
+
+// applyFireDamage 结算开火命中伤害
+func (r *Room) applyFireDamage(ctx context.Context, shooter *Player, target *Player, hit RaycastHit) {
+	if shooter == nil || target == nil || !target.Alive {
+		return
+	}
+	target.HP -= defaultFireDamage
+	if target.HP < 0 {
+		target.HP = 0
+	}
+	glog.Info(ctx, "player fire hit", glog.String("room_id", r.id), glog.Uint64("shooter_player_id", shooter.ID), glog.Uint64("target_player_id", target.ID), glog.Int("target_hp", target.HP), glog.Float64("distance", hit.Distance))
+	if target.HP > 0 {
+		r.saveAuthoritativeState(target.ID, target)
+		return
+	}
+
+	// 死亡只在存活状态切换时计数，避免重复命中重复累计
+	if shooter.ID != target.ID {
+		shooter.KillCount++
+	}
+	target.DeathCount++
+	target.Alive = false
+	if err := r.physics.RemovePlayer(target.ID); err != nil {
+		glog.Warn(ctx, "remove dead physics player failed", glog.String("room_id", r.id), glog.Uint64("player_id", target.ID), glog.Err(err))
+	}
+	r.saveAuthoritativeState(target.ID, target)
 }
 
 // saveAuthoritativeState 保存玩家当前权威状态
