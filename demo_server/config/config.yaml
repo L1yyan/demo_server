@@ -6,8 +6,8 @@ log:
 email:
   host: smtp.126.com
   port: 465
-  username: "liyansdemo@126.com"
-  password: WGsTf3AzBxBFRyyX
+  username: ""
+  password: 
 
 #Jwt
 jwt:
