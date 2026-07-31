@@ -277,7 +277,7 @@ PlayerCapsuleRadius: 0.35
 PlayerCapsuleHeight: 1.8
 PhysicsGroundPlane:  true
 DefaultMapID:        "map_001"
-MapCollisionPath:    "configs/maps/map_001/collision.json"
+MapCollisionPath:    "config/maps/map_001/collision.json"
 ```
 
 对应 `config/config.yaml` 中的配置是：
@@ -288,7 +288,7 @@ player_capsule_radius: 0.35
 player_capsule_height: 1.8
 physics_ground_plane: true
 default_map_id: "map_001"
-map_collision_path: "configs/maps/map_001/collision.json"
+map_collision_path: "config/maps/map_001/collision.json"
 ```
 
 配置含义：
@@ -683,7 +683,7 @@ PxCreatePlane(*world->physics, PxPlane(0, 1, 0, 0), *world->material)
 
 默认地面是 `PxRigidStatic`。它不会移动，主要用于阻挡玩家往 y<0 掉落，也给后续测试 raycast 提供一个静态碰撞体。
 
-当前第一阶段已经支持从 `configs/maps/map_001/collision.json` 加载 Unity 导出的 box 静态碰撞体。mesh cooking、sphere、capsule 和 trigger 区域会在后续按玩法需要扩展。
+当前第一阶段已经支持从 `config/maps/map_001/collision.json` 加载 Unity 导出的 box 静态碰撞体。mesh cooking、sphere、capsule 和 trigger 区域会在后续按玩法需要扩展。
 
 ### 13.1 创建顺序为什么重要
 

@@ -27,7 +27,7 @@ func TestDefaultConfigMapCollisionPath(t *testing.T) {
 	if cfg.DefaultMapID != "map_001" {
 		t.Fatalf("expected default map id map_001, got %s", cfg.DefaultMapID)
 	}
-	if cfg.MapCollisionPath != "configs/maps/map_001/collision.json" {
+	if cfg.MapCollisionPath != "config/maps/map_001/collision.json" {
 		t.Fatalf("unexpected map collision path: %s", cfg.MapCollisionPath)
 	}
 }

@@ -49,7 +49,7 @@ if err := server.Start(ctx); err != nil {
 | `PlayerCapsuleHeight` | `1.8` | 玩家胶囊体高度 | [../physx/world.go](../physx/world.go) `AddPlayer` |
 | `PhysicsGroundPlane` | `true` | 是否创建默认 y=0 地面 | [../physx/world.go](../physx/world.go) `NewWorld` |
 | `DefaultMapID` | `map_001` | 默认地图 ID | [../service/server.go](../service/server.go) `Start` / `newPhysicsWorldFactory` |
-| `MapCollisionPath` | `configs/maps/map_001/collision.json` | 服务端地图碰撞 JSON 路径 | [../physx/world.go](../physx/world.go) `loadMapCollision` |
+| `MapCollisionPath` | `config/maps/map_001/collision.json` | 服务端地图碰撞 JSON 路径 | [../physx/world.go](../physx/world.go) `loadMapCollision` |
 | `PhysicsHash` | `sha256:...` | 服务端物理数据 hash，用于和客户端校验地图物理一致性 | [../logic/room.go](../logic/room.go) `playerSyncMode` |
 | `PredictionEnabled` | `true` | 服务端是否允许客户端预测同步 | [../service/server.go](../service/server.go) `Start` |
 | `RollbackWindowTicks` | `60` | 服务端保留多少帧历史用于回滚和纠偏 | [../logic/sync.go](../logic/sync.go) |

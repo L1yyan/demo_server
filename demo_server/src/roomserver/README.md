@@ -54,7 +54,7 @@ room_server_01:
   player_capsule_height: 1.8
   physics_ground_plane: true
   default_map_id: "map_001"
-  map_collision_path: "configs/maps/map_001/collision.json"
+  map_collision_path: "config/maps/map_001/collision.json"
   physics_hash: "sha256:e1328d5d97e68938b5c55f13a7c04553849cdefcdfed8a32ea288275464d9289"
   prediction_enabled: true
   rollback_window_ticks: 60
@@ -575,7 +575,7 @@ player.Yaw = input.Yaw
 player.Pitch = input.Pitch
 ```
 
-如果 `input.Fire == true`，会调用 `PhysicsWorld.Raycast`。当前已默认使用 PhysX 后端，地图碰撞来自 `configs/maps/map_001/collision.json`。
+如果 `input.Fire == true`，会调用 `PhysicsWorld.Raycast`。当前已默认使用 PhysX 后端，地图碰撞来自 `config/maps/map_001/collision.json`。
 
 后续真实玩法要在这里扩展：
 
@@ -734,7 +734,7 @@ third_party/tools
 `Room` 仍然只依赖 `PhysicsWorld` 接口，不直接调用 cgo。每个房间通过 `PhysicsWorldFactory` 创建独立 PhysX scene，避免不同房间玩家发生碰撞串扰。PhysX world 创建时会加载默认地图碰撞：
 
 ```text
-configs/maps/map_001/collision.json
+config/maps/map_001/collision.json
 ```
 
 这份文件是 Unity 导出的服务端物理地图，当前支持 `box` 静态碰撞体，用于墙体、地面、建筑和障碍物阻挡。房间入场时会按 `spawn_points` 顺序分配出生点，所以两人房默认第 1 名玩家在 `spawn_a`，第 2 名玩家在 `spawn_b`。

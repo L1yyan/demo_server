@@ -215,7 +215,7 @@ C++ 层内部使用进程级 runtime 共享 `PxFoundation` 和 `PxPhysics`，每
 
 ## 14. 地图碰撞 JSON 结构
 
-默认文件是 [../../../configs/maps/map_001/collision.json](../../../configs/maps/map_001/collision.json)。解析代码在 [../physx/map_collision.go](../physx/map_collision.go)。
+默认文件是 [../../../config/maps/map_001/collision.json](../../../config/maps/map_001/collision.json)。解析代码在 [../physx/map_collision.go](../physx/map_collision.go)。
 
 `MapCollision` 字段：
 
@@ -299,7 +299,7 @@ C++ 层会把完整 size 转成 PhysX `PxBoxGeometry` 需要的半尺寸。
 projectRoot + MapCollisionPath
 ```
 
-所以默认 `configs/maps/map_001/collision.json` 可以从不同工作目录启动时被找到。
+所以默认 `config/maps/map_001/collision.json` 可以从不同工作目录启动时被找到。
 
 ## 19. 错误和边界
 

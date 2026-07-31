@@ -49,7 +49,7 @@ func NewFactory(cfg Config) *Factory {
 		cfg.DefaultMapID = "map_001"
 	}
 	if cfg.MapCollisionPath == "" {
-		cfg.MapCollisionPath = "configs/maps/map_001/collision.json"
+		cfg.MapCollisionPath = "config/maps/map_001/collision.json"
 	}
 	return &Factory{cfg: cfg}
 }
