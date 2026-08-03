@@ -509,6 +509,7 @@ Server.HandleMessage
       "yaw": 0,
       "pitch": 0,
       "fire": false,
+      "jump": false,
       "predicted_state": {
         "x": -4,
         "y": 0.1,
@@ -567,12 +568,13 @@ for {
 - 单帧输入：兼容旧客户端，直接投递 `MsgPlayerInput`。
 - 批量输入：预测客户端使用，服务端按 tick 缓存输入帧并在房间更新中按顺序应用。
 
-移动推进由服务端权威执行，核心逻辑是根据输入方向、tick 步长和移动速度调用 `PhysicsWorld.MovePlayer`，再把 PhysX 修正后的坐标写回玩家状态。简化表达如下：
+移动和跳跃推进由服务端权威执行，核心逻辑是根据输入方向、跳跃意图、tick 步长和移动速度调用 `PhysicsWorld.MovePlayer`，再把 PhysX 修正后的坐标写回玩家状态。简化表达如下：
 
 ```text
-input -> normalize move direction -> PhysicsWorld.MovePlayer -> update authoritative Player
+input -> normalize move direction/jump -> PhysicsWorld.MovePlayer -> update authoritative Player
 player.Yaw = input.Yaw
 player.Pitch = input.Pitch
+player.VerticalVelocity/Grounded = physics result
 ```
 
 如果 `input.Fire == true`，会调用 `PhysicsWorld.Raycast`。当前已默认使用 PhysX 后端，地图碰撞来自 `config/maps/map_001/collision.json`。

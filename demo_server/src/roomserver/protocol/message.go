@@ -109,6 +109,7 @@ type PlayerInput struct {
 	Yaw        float64 `json:"yaw"`         // 水平视角
 	Pitch      float64 `json:"pitch"`       // 垂直视角
 	Fire       bool    `json:"fire"`        // 是否开火
+	Jump       bool    `json:"jump"`        // 是否跳跃
 }
 
 // PlayerInputBatch 批量玩家输入消息
@@ -126,6 +127,7 @@ type PlayerInputFrame struct {
 	Yaw            float64               `json:"yaw"`                       // 水平视角
 	Pitch          float64               `json:"pitch"`                     // 垂直视角
 	Fire           bool                  `json:"fire"`                      // 是否开火
+	Jump           bool                  `json:"jump"`                      // 是否跳跃
 	PredictedState *PredictedPlayerState `json:"predicted_state,omitempty"` // 客户端预测状态
 }
 

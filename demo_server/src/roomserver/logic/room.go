@@ -353,6 +353,8 @@ func (r *Room) handleJoinEvent(ctx context.Context, event roomEvent) {
 	player.SpawnID = spawnPoint.ID
 	player.Alive = true
 	player.InvincibleUntilTick = 0
+	player.VerticalVelocity = 0
+	player.Grounded = true
 	player.SyncMode = r.playerSyncMode(player)
 	if err := r.physics.AddPlayer(player.ID, spawnPoint.Position); err != nil {
 		message, _ := protocol.NewJSONMessage(protocol.MsgJoinRoomAck, r.buildJoinAck(false, nil, "physics add player failed"))
@@ -664,6 +666,7 @@ func (r *Room) handleInput(ctx context.Context, playerID uint64, input protocol.
 		Yaw:        input.Yaw,
 		Pitch:      input.Pitch,
 		Fire:       input.Fire,
+		Jump:       input.Jump,
 	}
 	r.handleInputBatch(ctx, playerID, protocol.PlayerInputBatch{BaseClientTick: targetTick, Frames: []protocol.PlayerInputFrame{frame}})
 }
@@ -846,7 +849,7 @@ func (r *Room) updatePlayers(ctx context.Context) {
 		r.clearExpiredInvincibility(player)
 		syncState := r.ensureSyncState(playerID)
 		inputState, hasExactInput := r.inputForTick(syncState, r.tick)
-		if hasExactInput || syncState.hasLastInput {
+		if hasExactInput || syncState.hasLastInput || !player.Grounded || player.VerticalVelocity != 0 {
 			r.simulatePlayerTick(ctx, player, inputState, hasExactInput)
 		}
 		syncState.lastAppliedTick = r.tick
@@ -881,6 +884,7 @@ func (r *Room) inputForTick(syncState *playerSyncState, tick int64) (authoritati
 		held := syncState.lastInput
 		held.ClientTick = tick
 		held.Fire = false
+		held.Jump = false
 		return held, false
 	}
 	return authoritativeInput{}, false
@@ -889,8 +893,8 @@ func (r *Room) inputForTick(syncState *playerSyncState, tick int64) (authoritati
 // simulatePlayerTick 使用服务端权威输入模拟玩家一帧
 func (r *Room) simulatePlayerTick(ctx context.Context, player *Player, input authoritativeInput, hasExactInput bool) {
 	applyViewRotation(player, input)
-	moveReq, ok := buildMovePlayerRequest(player.ID, input, r.tickRate)
-	if ok && moveReq.Distance > 0 {
+	moveReq, ok := buildMovePlayerRequest(player, input, r.tickRate)
+	if ok && shouldMovePlayer(moveReq) {
 		// 由物理世界计算最终位置，避免逻辑层绕过碰撞规则
 		result, err := r.physics.MovePlayer(moveReq)
 		if err != nil {
@@ -900,6 +904,8 @@ func (r *Room) simulatePlayerTick(ctx context.Context, player *Player, input aut
 			player.X = result.Position.X
 			player.Y = result.Position.Y
 			player.Z = result.Position.Z
+			player.VerticalVelocity = result.VerticalVelocity
+			player.Grounded = result.Grounded
 		}
 	}
 	if hasExactInput && input.Fire {
@@ -997,6 +1003,8 @@ func (r *Room) respawnPlayerAtSpawn(ctx context.Context, player *Player) bool {
 	player.HP = defaultPlayerHP
 	player.Alive = true
 	player.InvincibleUntilTick = r.tick + durationToTicks(defaultRespawnInvincibleDuration, r.tickRate)
+	player.VerticalVelocity = 0
+	player.Grounded = true
 	r.discardFutureSyncState(player.ID)
 	glog.Info(ctx, "player respawned", glog.String("room_id", r.id), glog.Uint64("player_id", player.ID), glog.String("spawn_id", player.SpawnID), glog.Int64("server_tick", r.tick), glog.Int64("invincible_until_tick", player.InvincibleUntilTick))
 	return true

@@ -67,8 +67,8 @@ room_server_01:
   player_capsule_radius: 0.35
   player_capsule_height: 1.8
   physics_ground_plane: true
-  default_map_id: "map_001"
-  map_collision_path: "config/maps/map_001/collision.json"
+  default_map_id: "mfps_arena"
+  map_collision_path: "config/maps/mfps_arena/collision.json"
   physics_hash: "sha256:e1328d5d97e68938b5c55f13a7c04553849cdefcdfed8a32ea288275464d9289"
   prediction_enabled: true
   rollback_window_ticks: 60

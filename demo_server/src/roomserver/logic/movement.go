@@ -20,6 +20,7 @@ type authoritativeInput struct {
 	Yaw        float64 // 服务端归一化后的水平视角
 	Pitch      float64 // 服务端限制后的垂直视角
 	Fire       bool    // 是否请求开火
+	Jump       bool    // 是否请求跳跃
 }
 
 // sanitizePlayerInput 校验并归一化客户端输入
@@ -43,27 +44,37 @@ func sanitizePlayerInput(input protocol.PlayerInput) (authoritativeInput, bool) 
 		Yaw:        normalizeDegrees(input.Yaw),
 		Pitch:      clampFloat(input.Pitch, minPlayerPitch, maxPlayerPitch),
 		Fire:       input.Fire,
+		Jump:       input.Jump,
 	}, true
 }
 
 // buildMovePlayerRequest 按服务端 tick 生成物理移动请求
-func buildMovePlayerRequest(playerID uint64, input authoritativeInput, tickRate int) (MovePlayerRequest, bool) {
-	if playerID == 0 || tickRate <= 0 {
+func buildMovePlayerRequest(player *Player, input authoritativeInput, tickRate int) (MovePlayerRequest, bool) {
+	if player == nil || player.ID == 0 || tickRate <= 0 {
 		return MovePlayerRequest{}, false
 	}
 
 	// 根据服务端认可的 yaw 将本地输入转换为世界坐标移动
 	move := movementDirection(input.Yaw, input.MoveX, input.MoveZ)
-	if vectorLength(move) == 0 {
-		return MovePlayerRequest{PlayerID: playerID, Direction: move}, true
+	distance := 0.0
+	if vectorLength(move) > 0 {
+		distance = defaultPlayerMoveSpeed * (1 / float64(tickRate))
 	}
 	deltaTime := 1 / float64(tickRate)
 	return MovePlayerRequest{
-		PlayerID:  playerID,
-		Direction: move,
-		Distance:  defaultPlayerMoveSpeed * deltaTime,
-		DeltaTime: deltaTime,
+		PlayerID:         player.ID,
+		Direction:        move,
+		Distance:         distance,
+		DeltaTime:        deltaTime,
+		Jump:             input.Jump,
+		Grounded:         player.Grounded,
+		VerticalVelocity: player.VerticalVelocity,
 	}, true
+}
+
+// shouldMovePlayer 判断本帧是否需要交给物理后端推进
+func shouldMovePlayer(req MovePlayerRequest) bool {
+	return req.Distance > 0 || req.Jump || !req.Grounded || req.VerticalVelocity != 0
 }
 
 // applyViewRotation 更新玩家服务端认可的视角

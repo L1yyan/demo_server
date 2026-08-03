@@ -97,6 +97,8 @@ type playerFrameState struct {
 	Alive               bool
 	SpawnID             string
 	InvincibleUntilTick int64
+	VerticalVelocity    float64
+	Grounded            bool
 }
 
 // newPlayerSyncState 创建玩家同步状态
@@ -127,6 +129,8 @@ func frameStateFromPlayer(tick int64, player *Player) playerFrameState {
 		Alive:               player.Alive,
 		SpawnID:             player.SpawnID,
 		InvincibleUntilTick: player.InvincibleUntilTick,
+		VerticalVelocity:    player.VerticalVelocity,
+		Grounded:            player.Grounded,
 	}
 }
 
@@ -180,5 +184,6 @@ func inputFrameToPlayerInput(frame protocol.PlayerInputFrame) protocol.PlayerInp
 		Yaw:        frame.Yaw,
 		Pitch:      frame.Pitch,
 		Fire:       frame.Fire,
+		Jump:       frame.Jump,
 	}
 }

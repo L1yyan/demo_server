@@ -198,6 +198,9 @@ pitch clamp 到 [-89, 89]
   right   = (cos(yaw), 0, -sin(yaw))
   direction = forward * move_z + right * move_x
 移动距离：4.0 / tick_rate
+jump 只在按下跳跃键的输入帧为 true，不能在按住期间每帧持续 true
+服务端只在玩家处于地面时接受 jump，空中 jump 会被忽略
+垂直运动：jump 初速度约 5.0，重力约 -9.8，服务端按地图碰撞修正最终 Y 坐标
 ```
 
 服务端最终位置由物理后端按地图碰撞修正。客户端必须使用同一份地图碰撞数据；如果客户端物理和服务端物理无法完全一致，应依赖 `StateCorrection` 收敛，不要为了贴合 snapshot 私自改模拟规则。
@@ -218,6 +221,7 @@ pitch clamp 到 [-89, 89]
       "yaw": 0,
       "pitch": 0,
       "fire": false,
+      "jump": false,
       "predicted_state": {
         "x": -4,
         "y": 0.1,
@@ -240,6 +244,7 @@ pitch clamp 到 [-89, 89]
 - `yaw` 建议归一到 `[-180, 180]`。
 - `pitch` 限制在 `[-89, 89]`。
 - `fire` 只表示当前输入帧是否开火，不要把一次点击扩展成多帧 true。
+- `jump` 只表示当前输入帧是否请求跳跃，不要把按住跳跃键扩展成多帧 true。
 - `predicted_state` 至少按 `prediction_keyframe_interval` 上报一次。当前服务端只在 `client_tick % prediction_keyframe_interval == 0` 的帧做预测误差校验；例如间隔为 2 时，应保证偶数 tick 带预测状态。联调初期可以每帧带上，方便观察误差。
 - 同一 `client_tick` 的重复输入服务端只保留先到的一帧，后到包不会覆盖已缓存或已处理输入。
 
@@ -251,7 +256,7 @@ server_tick - rollback_window_ticks <= client_tick <= server_tick + future_input
 
 太旧输入不会改写服务端历史，预测模式下可能触发 `reason = "stale_input"` 的纠偏；太未来输入会被丢弃。单包帧数为 0 或超过 `max_input_batch_frames` 时，service 层会返回 `MsgError`。
 
-如果某个服务端 tick 没收到精确输入，服务端会短暂沿用上一帧移动输入，当前默认最多沿用 3 tick，但沿用帧会强制 `fire = false`。客户端不能依赖沿用作为正常移动机制，仍应持续发送每一帧输入。
+如果某个服务端 tick 没收到精确输入，服务端会短暂沿用上一帧移动输入，当前默认最多沿用 3 tick，但沿用帧会强制 `fire = false` 和 `jump = false`。客户端不能依赖沿用作为正常移动机制，仍应持续发送每一帧输入。
 
 ## 7. InputAck 处理
 

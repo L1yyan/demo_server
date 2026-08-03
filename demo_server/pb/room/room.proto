@@ -67,6 +67,7 @@ message PlayerInput {
   double yaw = 4; // 水平视角
   double pitch = 5; // 垂直视角
   bool fire = 6; // 是否开火
+  bool jump = 7; // 是否跳跃
 }
 
 // PredictedPlayerState 客户端预测状态
@@ -88,6 +89,7 @@ message PlayerInputFrame {
   double pitch = 5; // 垂直视角
   bool fire = 6; // 是否开火
   PredictedPlayerState predicted_state = 7; // 客户端预测状态
+  bool jump = 8; // 是否跳跃
 }
 
 // PlayerInputBatch 批量输入

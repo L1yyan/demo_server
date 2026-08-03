@@ -35,7 +35,7 @@ void px_world_release(px_world* world);
 int px_world_add_static_box(px_world* world, px_vec3 position, px_quat rotation, px_vec3 size, char* err, int err_len);
 int px_world_add_player_capsule(px_world* world, uint64_t player_id, px_vec3 position, double radius, double height, char* err, int err_len);
 int px_world_remove_player(px_world* world, uint64_t player_id, char* err, int err_len);
-int px_world_move_player(px_world* world, uint64_t player_id, px_vec3 direction, double distance, double delta_time, px_vec3* out_position, int* out_blocked, char* err, int err_len);
+int px_world_move_player(px_world* world, uint64_t player_id, px_vec3 direction, double distance, double delta_time, int jump, int grounded, double vertical_velocity, px_vec3* out_position, int* out_blocked, int* out_grounded, double* out_vertical_velocity, char* err, int err_len);
 int px_world_get_player_position(px_world* world, uint64_t player_id, px_vec3* out_position, char* err, int err_len);
 int px_world_set_player_position(px_world* world, uint64_t player_id, px_vec3 position, char* err, int err_len);
 int px_world_raycast(px_world* world, px_vec3 origin, px_vec3 direction, double max_distance, uint32_t mask, uint64_t ignored_player_id, px_raycast_hit* out_hit, char* err, int err_len);

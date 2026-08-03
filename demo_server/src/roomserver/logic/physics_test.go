@@ -42,6 +42,43 @@ func TestSimplePhysicsSetGetPlayerPosition(t *testing.T) {
 	}
 }
 
+// TestSimplePhysicsWorldJump 验证 simple 后端按跳跃输入推进玩家高度
+func TestSimplePhysicsWorldJump(t *testing.T) {
+	world := NewSimplePhysicsWorld()
+	defer world.Close()
+
+	if err := world.AddPlayer(1, Vector3{Y: defaultSimpleGroundHeight}); err != nil {
+		t.Fatalf("add player: %v", err)
+	}
+	result, err := world.MovePlayer(MovePlayerRequest{PlayerID: 1, DeltaTime: 0.05, Jump: true, Grounded: true})
+	if err != nil {
+		t.Fatalf("jump player: %v", err)
+	}
+	if result.Position.Y <= defaultSimpleGroundHeight {
+		t.Fatalf("expected player above ground after jump, got %.4f", result.Position.Y)
+	}
+	if result.VerticalVelocity <= 0 || result.Grounded {
+		t.Fatalf("unexpected jump state: velocity %.4f grounded %v", result.VerticalVelocity, result.Grounded)
+	}
+}
+
+// TestSimplePhysicsWorldJumpRequiresGrounded 验证 simple 后端空中不会重复起跳
+func TestSimplePhysicsWorldJumpRequiresGrounded(t *testing.T) {
+	world := NewSimplePhysicsWorld()
+	defer world.Close()
+
+	if err := world.AddPlayer(1, Vector3{Y: 1}); err != nil {
+		t.Fatalf("add player: %v", err)
+	}
+	result, err := world.MovePlayer(MovePlayerRequest{PlayerID: 1, DeltaTime: 0.05, Jump: true, Grounded: false, VerticalVelocity: -1})
+	if err != nil {
+		t.Fatalf("move player: %v", err)
+	}
+	if result.VerticalVelocity >= 0 {
+		t.Fatalf("expected airborne jump ignored, got velocity %.4f", result.VerticalVelocity)
+	}
+}
+
 // TestSimplePhysicsWorldInvalidRequest 验证 simple 后端拒绝非法物理请求
 func TestSimplePhysicsWorldInvalidRequest(t *testing.T) {
 	world := NewSimplePhysicsWorld()

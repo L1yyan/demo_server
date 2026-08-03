@@ -35,11 +35,13 @@ type AllocateResult struct {
 
 // Matcher 匹配分配器
 type Matcher struct {
-	mu          sync.Mutex     // 分配状态锁
-	tokenSecret string         // room token签名密钥
-	tokenExpire time.Duration  // room token有效期
-	servers     []*serverState // roomserver状态列表
-	sequence    uint64         // 分配序号
+	mu           sync.Mutex                           // 分配状态锁
+	tokenSecret  string                               // room token签名密钥
+	tokenExpire  time.Duration                        // room token有效期
+	servers      []*serverState                       // roomserver状态列表
+	reservations map[reservationKey]*reservationState // 活跃匹配占位
+	sequence     uint64                               // 分配序号
+	now          func() time.Time                     // 当前时间函数，便于测试占位过期
 }
 
 type serverState struct {
@@ -51,8 +53,24 @@ type serverState struct {
 }
 
 type roomState struct {
-	id      string // 房间ID
-	players int    // 当前占位人数
+	id           string                               // 房间ID
+	reservations map[reservationKey]*reservationState // 当前有效占位
+}
+
+type reservationKey struct {
+	playerID uint64 // 玩家ID
+	mode     string // 匹配模式
+}
+
+type reservationState struct {
+	key        reservationKey // 占位索引
+	serverID   string         // roomserver ID
+	serverAddr string         // roomserver连接地址
+	roomID     string         // 房间ID
+	matchID    string         // 匹配ID
+	roomToken  string         // 入房令牌
+	expireAt   time.Time      // 占位过期时间
+	room       *roomState     // 所属房间
 }
 
 // NewMatcher 创建匹配分配器
@@ -81,7 +99,13 @@ func NewMatcher(cfg conf.MatchServerConfig) (*Matcher, error) {
 	if len(servers) == 0 {
 		return nil, ErrNoAvailableServer
 	}
-	return &Matcher{tokenSecret: cfg.TokenSecret, tokenExpire: cfg.TokenExpire, servers: servers}, nil
+	return &Matcher{
+		tokenSecret:  cfg.TokenSecret,
+		tokenExpire:  cfg.TokenExpire,
+		servers:      servers,
+		reservations: make(map[reservationKey]*reservationState),
+		now:          time.Now,
+	}, nil
 }
 
 // AllocateRoom 分配房间并签发入房令牌
@@ -92,24 +116,31 @@ func (m *Matcher) AllocateRoom(ctx context.Context, playerID uint64, mode string
 	if playerID == 0 {
 		return nil, ErrInvalidPlayer
 	}
-	mode = strings.TrimSpace(mode)
-	if mode == "" {
-		mode = defaultMatchMode
-	}
+	mode = normalizeMatchMode(mode)
+	now := m.currentTime()
 
 	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// 清理超时占位，避免失败入房长期占满房间
+	m.purgeExpiredReservations(now)
+
+	key := reservationKey{playerID: playerID, mode: mode}
+	if reservation := m.reservations[key]; reservation != nil && reservation.expireAt.After(now) {
+		return reservation.toAllocateResult(), nil
+	}
+
 	server, room, seq, err := m.allocateLocked()
-	m.mu.Unlock()
 	if err != nil {
 		return nil, err
 	}
 
-	expireAt := time.Now().Add(m.tokenExpire).UnixMilli()
+	matchID := newMatchID(mode, seq)
 	claims := roomtoken.Claims{
 		PlayerID: playerID,
 		RoomID:   room.id,
 		ServerID: server.id,
-		MatchID:  newMatchID(mode, seq),
+		MatchID:  matchID,
 		Nonce:    newNonce(playerID, seq),
 	}
 	// 签发短期入房令牌，客户端后续直连 roomserver 时携带
@@ -117,14 +148,20 @@ func (m *Matcher) AllocateRoom(ctx context.Context, playerID uint64, mode string
 	if err != nil {
 		return nil, fmt.Errorf("generate room token: %w", err)
 	}
-	return &AllocateResult{
-		RoomID:     room.id,
-		ServerID:   server.id,
-		ServerAddr: server.addr,
-		MatchID:    claims.MatchID,
-		RoomToken:  token,
-		ExpireAt:   expireAt,
-	}, nil
+
+	reservation := &reservationState{
+		key:        key,
+		serverID:   server.id,
+		serverAddr: server.addr,
+		roomID:     room.id,
+		matchID:    matchID,
+		roomToken:  token,
+		expireAt:   now.Add(m.tokenExpire),
+		room:       room,
+	}
+	room.reservations[key] = reservation
+	m.reservations[key] = reservation
+	return reservation.toAllocateResult(), nil
 }
 
 // allocateLocked 在锁内选择服务器和房间
@@ -137,17 +174,29 @@ func (m *Matcher) allocateLocked() (*serverState, *roomState, uint64, error) {
 		if room == nil {
 			continue
 		}
-		room.players++
 		m.sequence++
 		return server, room, m.sequence, nil
 	}
 	return nil, nil, 0, ErrRoomServerFull
 }
 
+// purgeExpiredReservations 释放过期的房间占位
+func (m *Matcher) purgeExpiredReservations(now time.Time) {
+	for key, reservation := range m.reservations {
+		if reservation == nil || reservation.expireAt.After(now) {
+			continue
+		}
+		delete(m.reservations, key)
+		if reservation.room != nil {
+			delete(reservation.room.reservations, key)
+		}
+	}
+}
+
 // findAvailableRoom 查找未满房间
 func (s *serverState) findAvailableRoom() *roomState {
 	for _, room := range s.rooms {
-		if room.players < s.maxPlayersPerRoom {
+		if room.reservationCount() < s.maxPlayersPerRoom {
 			return room
 		}
 	}
@@ -159,9 +208,49 @@ func (s *serverState) createRoom() *roomState {
 	if s.maxRooms > 0 && len(s.rooms) >= s.maxRooms {
 		return nil
 	}
-	room := &roomState{id: fmt.Sprintf("%s-%d", s.id, len(s.rooms)+1)}
+	room := &roomState{id: fmt.Sprintf("%s-%d", s.id, len(s.rooms)+1), reservations: make(map[reservationKey]*reservationState)}
 	s.rooms = append(s.rooms, room)
 	return room
+}
+
+// reservationCount 返回房间当前有效占位数量
+func (r *roomState) reservationCount() int {
+	if r == nil {
+		return 0
+	}
+	return len(r.reservations)
+}
+
+// toAllocateResult 转换为对外分配结果
+func (r *reservationState) toAllocateResult() *AllocateResult {
+	if r == nil {
+		return nil
+	}
+	return &AllocateResult{
+		RoomID:     r.roomID,
+		ServerID:   r.serverID,
+		ServerAddr: r.serverAddr,
+		MatchID:    r.matchID,
+		RoomToken:  r.roomToken,
+		ExpireAt:   r.expireAt.UnixMilli(),
+	}
+}
+
+// currentTime 返回 matcher 当前时间
+func (m *Matcher) currentTime() time.Time {
+	if m.now == nil {
+		return time.Now()
+	}
+	return m.now()
+}
+
+// normalizeMatchMode 规整匹配模式
+func normalizeMatchMode(mode string) string {
+	mode = strings.TrimSpace(mode)
+	if mode == "" {
+		return defaultMatchMode
+	}
+	return mode
 }
 
 // normalizeConfig 补齐匹配配置默认值

@@ -155,7 +155,7 @@ func (s *Server) acceptLoop(ctx context.Context) {
 		session := NewSession(sessionID, conn, s.cfg, s)
 		s.sessions.Store(sessionID, session)
 		session.Start(ctx)
-		glog.Info(ctx, "session accepted", glog.String("session_id", sessionID), glog.String("remote_addr", conn.RemoteAddr().String()))
+		glog.Info(ctx, "session accepted", glog.String("session_id", sessionID), glog.Any("player_id", session.playerID), glog.String("remote_addr", conn.RemoteAddr().String()))
 	}
 }
 

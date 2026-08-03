@@ -140,6 +140,7 @@ DecodeJSON
 | `yaw` | `Yaw` | `float64` | 水平视角，服务端会归一化到 `[-180, 180]` |
 | `pitch` | `Pitch` | `float64` | 垂直视角，服务端会限制到 `[-89, 89]` |
 | `fire` | `Fire` | `bool` | 当前输入帧是否开火 |
+| `jump` | `Jump` | `bool` | 当前输入帧是否跳跃 |
 
 服务端不会信任客户端传来的坐标。移动位置由 [../logic/movement.go](../logic/movement.go) 和物理后端计算。
 
@@ -163,6 +164,7 @@ DecodeJSON
 | `yaw` | `Yaw` | `float64` | 水平视角 |
 | `pitch` | `Pitch` | `float64` | 垂直视角 |
 | `fire` | `Fire` | `bool` | 是否开火 |
+| `jump` | `Jump` | `bool` | 是否跳跃 |
 | `predicted_state` | `PredictedState` | `*PredictedPlayerState` | 客户端本地预测状态，可为空；服务端只用它做误差检测 |
 
 ## 10. PredictedPlayerState 字段

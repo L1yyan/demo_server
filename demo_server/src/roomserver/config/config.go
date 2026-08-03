@@ -58,8 +58,8 @@ func DefaultConfig() Config {
 		PlayerCapsuleRadius:        0.35,
 		PlayerCapsuleHeight:        1.8,
 		PhysicsGroundPlane:         true,
-		DefaultMapID:               "map_001",
-		MapCollisionPath:           "config/maps/map_001/collision.json",
+		DefaultMapID:               "mfps_arena",
+		MapCollisionPath:           "config/maps/mfps_arena/collision.json",
 		PhysicsHash:                "sha256:e1328d5d97e68938b5c55f13a7c04553849cdefcdfed8a32ea288275464d9289",
 		PredictionEnabled:          true,
 		RollbackWindowTicks:        60,
@@ -71,7 +71,7 @@ func DefaultConfig() Config {
 		MaxInputBatchFrames:        8,
 		MaxInputHoldTicks:          8,
 		CorrectionMinIntervalTicks: 2,
-		GameDuration:               1 * time.Minute,
+		GameDuration:               3 * time.Minute,
 	}
 }
 

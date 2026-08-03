@@ -46,10 +46,10 @@ func NewFactory(cfg Config) *Factory {
 		cfg.PlayerCapsuleHeight = 1.8
 	}
 	if cfg.DefaultMapID == "" {
-		cfg.DefaultMapID = "map_001"
+		cfg.DefaultMapID = "mfps_arena"
 	}
 	if cfg.MapCollisionPath == "" {
-		cfg.MapCollisionPath = "config/maps/map_001/collision.json"
+		cfg.MapCollisionPath = "config/maps/mfps_arena/collision.json"
 	}
 	return &Factory{cfg: cfg}
 }
@@ -159,15 +159,25 @@ func (w *World) MovePlayer(req logic.MovePlayerRequest) (logic.MovePlayerResult,
 
 	var outPosition C.CVec3
 	var outBlocked C.int
+	var outGrounded C.int
+	var outVerticalVelocity C.double
 	deltaTime := req.DeltaTime
 	if deltaTime <= 0 {
 		deltaTime = 1.0 / 60.0
 	}
-	code := C.px_world_move_player(w.ptr, C.uint64_t(req.PlayerID), toCVec3(req.Direction), C.double(req.Distance), C.double(deltaTime), &outPosition, &outBlocked, errBuf, cErrorBufferSize)
+	jump := C.int(0)
+	if req.Jump {
+		jump = 1
+	}
+	grounded := C.int(0)
+	if req.Grounded {
+		grounded = 1
+	}
+	code := C.px_world_move_player(w.ptr, C.uint64_t(req.PlayerID), toCVec3(req.Direction), C.double(req.Distance), C.double(deltaTime), jump, grounded, C.double(req.VerticalVelocity), &outPosition, &outBlocked, &outGrounded, &outVerticalVelocity, errBuf, cErrorBufferSize)
 	if code != 0 {
 		return logic.MovePlayerResult{}, cError(errBuf, "move physx player")
 	}
-	return logic.MovePlayerResult{Position: fromCVec3(outPosition), Blocked: outBlocked != 0}, nil
+	return logic.MovePlayerResult{Position: fromCVec3(outPosition), Blocked: outBlocked != 0, Grounded: outGrounded != 0, VerticalVelocity: float64(outVerticalVelocity)}, nil
 }
 
 // GetPlayerPosition 读取玩家当前 PhysX 位置

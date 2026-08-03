@@ -25,6 +25,8 @@ type Player struct {
 	Session             Session // 玩家连接会话
 	Alive               bool    // 是否存活
 	InvincibleUntilTick int64   // 无敌结束帧号
+	VerticalVelocity    float64 // 垂直速度
+	Grounded            bool    // 是否处于地面
 	SyncVersion         int     // 客户端同步协议版本
 	PredictionEnabled   bool    // 客户端是否请求预测模式
 	PhysicsHash         string  // 客户端物理数据hash

@@ -37,7 +37,7 @@ Room.updatePlayers
 | --- | --- |
 | `AddPlayer(playerID, position)` | 在物理世界中创建玩家碰撞体 |
 | `RemovePlayer(playerID)` | 从物理世界移除玩家碰撞体 |
-| `MovePlayer(req)` | 按输入方向和距离推进玩家，返回碰撞修正后的位置 |
+| `MovePlayer(req)` | 按输入方向、距离和垂直状态推进玩家，返回碰撞修正后的位置 |
 | `GetPlayerPosition(playerID)` | 读取玩家当前物理坐标 |
 | `SetPlayerPosition(playerID, position)` | 设置玩家当前物理坐标，后续重生或传送会用到 |
 | `Raycast(req)` | 执行单条射线检测，当前开火时预留调用 |
@@ -54,9 +54,12 @@ Room.updatePlayers
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
 | `PlayerID` | `uint64` | 要移动的玩家 ID |
-| `Direction` | `Vector3` | 服务端计算出的世界坐标移动方向，通常应归一化 |
-| `Distance` | `float64` | 本 tick 希望移动的距离 |
+| `Direction` | `Vector3` | 服务端计算出的世界坐标水平移动方向，通常应归一化 |
+| `Distance` | `float64` | 本 tick 希望水平移动的距离 |
 | `DeltaTime` | `float64` | 当前物理步长，通常是 `1 / tickRate` |
+| `Jump` | `bool` | 本 tick 是否请求跳跃 |
+| `Grounded` | `bool` | 玩家上一帧是否处于地面 |
+| `VerticalVelocity` | `float64` | 玩家上一帧垂直速度 |
 
 请求由 [../logic/movement.go](../logic/movement.go) `buildMovePlayerRequest` 构造。
 
@@ -66,6 +69,8 @@ Room.updatePlayers
 | --- | --- | --- |
 | `Position` | `Vector3` | 物理后端计算后的最终坐标 |
 | `Blocked` | `bool` | 本次移动是否被碰撞阻挡或修正 |
+| `Grounded` | `bool` | 移动后是否处于地面 |
+| `VerticalVelocity` | `float64` | 移动后的垂直速度 |
 
 Room 只使用 `Position` 更新玩家权威坐标。`Blocked` 当前主要用于测试和后续玩法扩展。
 

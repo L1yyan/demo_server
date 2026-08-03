@@ -24,10 +24,10 @@ func TestNormalizeMaxPlayersPerRoom(t *testing.T) {
 // TestDefaultConfigMapCollisionPath 验证默认地图碰撞文件路径已配置
 func TestDefaultConfigMapCollisionPath(t *testing.T) {
 	cfg := DefaultConfig()
-	if cfg.DefaultMapID != "map_001" {
-		t.Fatalf("expected default map id map_001, got %s", cfg.DefaultMapID)
+	if cfg.DefaultMapID != "mfps_arena" {
+		t.Fatalf("expected default map id mfps_arena, got %s", cfg.DefaultMapID)
 	}
-	if cfg.MapCollisionPath != "config/maps/map_001/collision.json" {
+	if cfg.MapCollisionPath != "config/maps/mfps_arena/collision.json" {
 		t.Fatalf("unexpected map collision path: %s", cfg.MapCollisionPath)
 	}
 }

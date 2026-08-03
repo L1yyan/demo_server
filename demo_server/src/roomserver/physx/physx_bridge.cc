@@ -40,6 +40,12 @@ namespace {
 
 std::mutex g_runtime_mutex;
 px_runtime* g_runtime = nullptr;
+constexpr double k_player_jump_speed = 5.0;
+constexpr double k_player_gravity = -9.8;
+constexpr PxReal k_sweep_skin_width = 0.01f;
+constexpr PxReal k_ground_probe_distance = 0.12f;
+constexpr PxReal k_walkable_normal_y = 0.5f;
+constexpr PxReal k_ceiling_normal_y = -0.5f;
 
 void set_error(char* err, int err_len, const char* message) {
     if (err == nullptr || err_len <= 0) {
@@ -332,8 +338,8 @@ int px_world_remove_player(px_world* world, uint64_t player_id, char* err, int e
     return 0;
 }
 
-int px_world_move_player(px_world* world, uint64_t player_id, px_vec3 direction, double distance, double delta_time, px_vec3* out_position, int* out_blocked, char* err, int err_len) {
-    if (world == nullptr || out_position == nullptr || out_blocked == nullptr) {
+int px_world_move_player(px_world* world, uint64_t player_id, px_vec3 direction, double distance, double delta_time, int jump, int grounded, double vertical_velocity, px_vec3* out_position, int* out_blocked, int* out_grounded, double* out_vertical_velocity, char* err, int err_len) {
+    if (world == nullptr || out_position == nullptr || out_blocked == nullptr || out_grounded == nullptr || out_vertical_velocity == nullptr) {
         set_error(err, err_len, "invalid move request");
         return 1;
     }
@@ -342,34 +348,63 @@ int px_world_move_player(px_world* world, uint64_t player_id, px_vec3 direction,
         set_error(err, err_len, "player not found");
         return 1;
     }
-    if (!valid_vec3(direction) || !std::isfinite(distance) || distance < 0 || !std::isfinite(delta_time) || delta_time <= 0) {
+    if (!valid_vec3(direction) || !std::isfinite(distance) || distance < 0 || !std::isfinite(delta_time) || delta_time <= 0 || !std::isfinite(vertical_velocity)) {
         set_error(err, err_len, "invalid move value");
         return 1;
     }
 
     PxRigidDynamic* actor = iter->second.actor;
-    PxVec3 dir = to_px_vec3(direction);
-    PxReal length = dir.magnitude();
-    if (length <= 0.0001f || distance == 0) {
-        *out_position = actor_player_position(actor, iter->second.height);
-        *out_blocked = 0;
-        return 0;
+    PxVec3 horizontal = to_px_vec3(direction);
+    PxReal horizontal_length = horizontal.magnitude();
+    if (horizontal_length > 0.0001f && distance > 0) {
+        horizontal = horizontal / horizontal_length * static_cast<PxReal>(distance);
+    } else {
+        horizontal = PxVec3(0.0f);
     }
-    dir /= length;
+
+    double next_vertical_velocity = vertical_velocity;
+    if (jump != 0 && grounded != 0) {
+        next_vertical_velocity = k_player_jump_speed + k_player_gravity * delta_time;
+    } else if (grounded != 0) {
+        next_vertical_velocity = 0.0;
+    } else {
+        next_vertical_velocity += k_player_gravity * delta_time;
+    }
+    PxVec3 displacement = horizontal + PxVec3(0.0f, static_cast<PxReal>(next_vertical_velocity * delta_time), 0.0f);
 
     PxCapsuleGeometry geometry(static_cast<PxReal>(iter->second.radius), capsule_half_height(iter->second.radius, iter->second.height));
     PxTransform current = actor->getGlobalPose();
-    PxSweepBuffer sweep_hit;
     PxQueryFilterData filter_data(PxQueryFlag::eSTATIC | PxQueryFlag::eDYNAMIC | PxQueryFlag::ePREFILTER);
     IgnoreActorFilter filter_callback(actor);
-    bool blocked = world->scene->sweep(geometry, current, dir, static_cast<PxReal>(distance), sweep_hit, PxHitFlag::eDEFAULT, filter_data, &filter_callback);
 
-    PxReal travel = static_cast<PxReal>(distance);
-    if (blocked && sweep_hit.hasBlock) {
-        travel = std::max<PxReal>(0.0f, sweep_hit.block.distance - 0.01f);
-    }
+    bool blocked = false;
+    bool is_grounded = false;
     PxTransform next = current;
-    next.p += dir * travel;
+    PxReal move_distance = displacement.magnitude();
+    if (move_distance > 0.0001f) {
+        PxVec3 move_dir = displacement / move_distance;
+        PxSweepBuffer sweep_hit;
+        blocked = world->scene->sweep(geometry, current, move_dir, move_distance, sweep_hit, PxHitFlag::eDEFAULT, filter_data, &filter_callback);
+        PxReal travel = move_distance;
+        if (blocked && sweep_hit.hasBlock) {
+            travel = std::max<PxReal>(0.0f, sweep_hit.block.distance - k_sweep_skin_width);
+            if (sweep_hit.block.normal.y >= k_walkable_normal_y && next_vertical_velocity <= 0.0) {
+                is_grounded = true;
+                next_vertical_velocity = 0.0;
+            } else if (sweep_hit.block.normal.y <= k_ceiling_normal_y && next_vertical_velocity > 0.0) {
+                next_vertical_velocity = 0.0;
+            }
+        }
+        next.p += move_dir * travel;
+    }
+
+    PxSweepBuffer ground_hit;
+    bool ground_blocked = world->scene->sweep(geometry, next, PxVec3(0.0f, -1.0f, 0.0f), k_ground_probe_distance, ground_hit, PxHitFlag::eDEFAULT, filter_data, &filter_callback);
+    if (ground_blocked && ground_hit.hasBlock && ground_hit.block.normal.y >= k_walkable_normal_y && next_vertical_velocity <= 0.0) {
+        is_grounded = true;
+        next_vertical_velocity = 0.0;
+    }
+
     actor->setKinematicTarget(next);
     world->scene->simulate(static_cast<PxReal>(delta_time));
     world->scene->fetchResults(true);
@@ -377,6 +412,8 @@ int px_world_move_player(px_world* world, uint64_t player_id, px_vec3 direction,
 
     *out_position = actor_player_position(actor, iter->second.height);
     *out_blocked = blocked ? 1 : 0;
+    *out_grounded = is_grounded ? 1 : 0;
+    *out_vertical_velocity = next_vertical_velocity;
     return 0;
 }
 

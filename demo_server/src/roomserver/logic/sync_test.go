@@ -26,6 +26,43 @@ func TestDuplicateInputTickDoesNotOverrideProcessedInput(t *testing.T) {
 	}
 }
 
+// TestJumpInputMovesPlayerVertically 验证跳跃输入会推进玩家高度并进入空中状态
+func TestJumpInputMovesPlayerVertically(t *testing.T) {
+	room := newPredictionTestRoom()
+	player := newPredictionTestPlayer(1)
+	room.handleJoin(context.Background(), player)
+
+	room.handleInputBatch(context.Background(), player.ID, protocol.PlayerInputBatch{Frames: []protocol.PlayerInputFrame{
+		{ClientTick: 1, Jump: true, Yaw: 0, Pitch: 0},
+	}})
+	room.update(context.Background())
+
+	if player.Y <= defaultSimpleGroundHeight {
+		t.Fatalf("expected player above ground after jump, got y %.4f", player.Y)
+	}
+	if player.VerticalVelocity <= 0 || player.Grounded {
+		t.Fatalf("unexpected jump state: velocity %.4f grounded %v", player.VerticalVelocity, player.Grounded)
+	}
+}
+
+// TestHeldInputDoesNotRepeatJump 验证缺帧沿用输入不会重复触发跳跃
+func TestHeldInputDoesNotRepeatJump(t *testing.T) {
+	room := newPredictionTestRoom()
+	player := newPredictionTestPlayer(1)
+	room.handleJoin(context.Background(), player)
+
+	room.handleInputBatch(context.Background(), player.ID, protocol.PlayerInputBatch{Frames: []protocol.PlayerInputFrame{
+		{ClientTick: 1, Jump: true, Yaw: 0, Pitch: 0},
+	}})
+	room.update(context.Background())
+	firstVelocity := player.VerticalVelocity
+	room.update(context.Background())
+
+	if player.VerticalVelocity >= firstVelocity {
+		t.Fatalf("expected held input not to refresh jump velocity, first %.4f now %.4f", firstVelocity, player.VerticalVelocity)
+	}
+}
+
 // TestPredictionWithinToleranceDoesNotCorrect 验证预测误差在阈值内不会纠偏
 func TestPredictionWithinToleranceDoesNotCorrect(t *testing.T) {
 	room := newPredictionTestRoom()

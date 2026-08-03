@@ -92,6 +92,7 @@
 | `Yaw` | `float64` | 归一化后的水平视角，范围 `[-180, 180]` |
 | `Pitch` | `float64` | 限制后的垂直视角，范围 `[-89, 89]` |
 | `Fire` | `bool` | 当前帧是否请求开火 |
+| `Jump` | `bool` | 当前帧是否请求跳跃 |
 
 `sanitizePlayerInput` 会拒绝 NaN 和 Inf，防止异常浮点数污染服务端物理计算。
 
@@ -169,12 +170,12 @@
   -> 使用精确输入
   -> 记录 lastInput / lastInputTick
 否则如果有 lastInput 且 tick - lastInputTick <= MaxInputHoldTicks：
-  -> 沿用 lastInput，但 ClientTick 改成当前 tick，Fire 强制 false
+  -> 沿用 lastInput，但 ClientTick 改成当前 tick，Fire 和 Jump 强制 false
 否则：
   -> 当前 tick 无输入
 ```
 
-为什么 `Fire` 沿用时强制 false：避免网络缺帧导致一次开火输入被服务端重复当成多次开火。
+为什么 `Fire` 和 `Jump` 沿用时强制 false：避免网络缺帧导致一次开火或跳跃输入被服务端重复当成多次触发。
 
 ## 10. simulatePlayerTick 如何移动玩家
 
@@ -195,6 +196,8 @@ movementDirection(input.Yaw, input.MoveX, input.MoveZ)
   -> 根据 yaw 把本地输入转换成世界方向
 Distance = defaultPlayerMoveSpeed * (1 / tickRate)
 DeltaTime = 1 / tickRate
+Jump = 当前帧跳跃请求
+VerticalVelocity/Grounded = 玩家上一帧垂直状态
 ```
 
 当前默认移动速度是 `4.0` 单位/秒，20 tick 下每 tick 最大移动距离是 `0.2`。
@@ -321,7 +324,7 @@ minTick := r.tick - RollbackWindowTicks
 因为服务端不接受“我现在在这里”作为真相。客户端能影响服务端的主要是：
 
 ```text
-move_x / move_z / yaw / pitch / fire / client_tick
+move_x / move_z / yaw / pitch / fire / jump / client_tick
 ```
 
 服务端会做：

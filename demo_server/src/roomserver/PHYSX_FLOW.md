@@ -509,7 +509,7 @@ src/roomserver/logic/room.go
 移动请求由 `movement.go` 中的 `buildMovePlayerRequest` 生成：
 
 ```go
-buildMovePlayerRequest(playerID, input, r.tickRate)
+buildMovePlayerRequest(player, input, r.tickRate)
 ```
 
 移动距离和物理步长计算方式：
@@ -564,8 +564,10 @@ C.px_world_move_player(...)
 
 ```go
 logic.MovePlayerResult{
-    Position: fromCVec3(outPosition),
-    Blocked:  outBlocked != 0,
+    Position:         fromCVec3(outPosition),
+    Blocked:          outBlocked != 0,
+    Grounded:         outGrounded != 0,
+    VerticalVelocity: float64(outVerticalVelocity),
 }
 ```
 
@@ -584,7 +586,7 @@ physx backend requires building with -tags physx
 
 这样不会静默降级，避免误以为已经启用 PhysX。
 
-当前 `MovePlayerRequest` 会携带 `DeltaTime`，PhysX C++ 层使用房间 tick 对应的步长执行 `simulate(delta_time)`，不再固定为 `1/60`。Go 封装也提供 `GetPlayerPosition` 和 `SetPlayerPosition`，用于纠偏、测试和后续服务端回滚基础。
+当前 `MovePlayerRequest` 会携带 `DeltaTime`、`Jump`、`Grounded` 和 `VerticalVelocity`，PhysX C++ 层使用房间 tick 对应的步长执行 `simulate(delta_time)`，并用 capsule sweep 同时处理水平移动和跳跃垂直位移。Go 封装也提供 `GetPlayerPosition` 和 `SetPlayerPosition`，用于纠偏、测试和后续服务端回滚基础。
 
 ### 11.1 为什么要有 Go 封装层
 
@@ -824,12 +826,14 @@ travel = max(0, hitDistance - 0.01)
 
 ```go
 type MovePlayerResult struct {
-    Position Vector3
-    Blocked  bool
+    Position         Vector3
+    Blocked          bool
+    Grounded         bool
+    VerticalVelocity float64
 }
 ```
 
-目前 Go 层只使用 `Position` 更新玩家坐标，`Blocked` 预留给后续做客户端纠偏、碰撞反馈或状态同步。
+目前 Go 层使用 `Position` 更新玩家坐标，并用 `Grounded` 和 `VerticalVelocity` 维护跳跃状态；`Blocked` 预留给后续做客户端纠偏、碰撞反馈或状态同步。
 
 ## 16. 开火 Raycast
 

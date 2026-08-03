@@ -9,6 +9,9 @@ import (
 const (
 	defaultPlayerCapsuleRadius = 0.35      // 玩家胶囊体半径
 	defaultPlayerCapsuleHeight = 1.8       // 玩家胶囊体高度
+	defaultPlayerJumpSpeed     = 5.0       // 玩家跳跃初速度
+	defaultPlayerGravity       = -9.8      // 玩家垂直重力加速度
+	defaultSimpleGroundHeight  = 0.0       // simple 后端默认地面高度
 	defaultSpawnAID            = "spawn_a" // 默认A出生点ID
 	defaultSpawnBID            = "spawn_b" // 默认B出生点ID
 )
@@ -24,16 +27,21 @@ var (
 
 // MovePlayerRequest 玩家移动物理请求
 type MovePlayerRequest struct {
-	PlayerID  uint64  // 玩家ID
-	Direction Vector3 // 移动方向
-	Distance  float64 // 移动距离
-	DeltaTime float64 // 当前物理步长
+	PlayerID         uint64  // 玩家ID
+	Direction        Vector3 // 水平移动方向
+	Distance         float64 // 水平移动距离
+	DeltaTime        float64 // 当前物理步长
+	Jump             bool    // 是否请求跳跃
+	Grounded         bool    // 当前是否处于地面
+	VerticalVelocity float64 // 当前垂直速度
 }
 
 // MovePlayerResult 玩家移动物理结果
 type MovePlayerResult struct {
-	Position Vector3 // 物理修正后的坐标
-	Blocked  bool    // 是否被碰撞阻挡
+	Position         Vector3 // 物理修正后的坐标
+	Blocked          bool    // 是否被碰撞阻挡
+	Grounded         bool    // 移动后是否处于地面
+	VerticalVelocity float64 // 移动后的垂直速度
 }
 
 // RaycastRequest 射线检测请求
@@ -136,7 +144,7 @@ func (w *SimplePhysicsWorld) RemovePlayer(playerID uint64) error {
 
 // MovePlayer 按简化边界推进玩家位置
 func (w *SimplePhysicsWorld) MovePlayer(req MovePlayerRequest) (MovePlayerResult, error) {
-	if req.PlayerID == 0 || !vectorFinite(req.Direction) || !isFinite(req.Distance) || req.Distance < 0 {
+	if req.PlayerID == 0 || !vectorFinite(req.Direction) || !isFinite(req.Distance) || req.Distance < 0 || !isFinite(req.DeltaTime) || req.DeltaTime < 0 || !isFinite(req.VerticalVelocity) {
 		return MovePlayerResult{}, ErrInvalidPhysicsRequest
 	}
 
@@ -150,15 +158,31 @@ func (w *SimplePhysicsWorld) MovePlayer(req MovePlayerRequest) (MovePlayerResult
 		return MovePlayerResult{}, ErrPhysicsPlayerNotFound
 	}
 
-	// 简化后端只做世界边界限制，真实碰撞由 PhysX 后端负责
-	next := Vector3{
-		X: clampFloat(position.X+req.Direction.X*req.Distance, -defaultWorldLimit, defaultWorldLimit),
-		Y: clampFloat(position.Y+req.Direction.Y*req.Distance, 0, defaultWorldLimit),
-		Z: clampFloat(position.Z+req.Direction.Z*req.Distance, -defaultWorldLimit, defaultWorldLimit),
+	deltaTime := req.DeltaTime
+	if deltaTime <= 0 {
+		deltaTime = 1.0 / 60.0
 	}
-	blocked := next.X != position.X+req.Direction.X*req.Distance || next.Z != position.Z+req.Direction.Z*req.Distance
+	verticalVelocity := nextVerticalVelocity(req.VerticalVelocity, req.Jump, req.Grounded, deltaTime)
+	verticalMove := verticalVelocity * deltaTime
+
+	// 简化后端只做世界边界和默认地面限制，真实地图碰撞由 PhysX 后端负责
+	rawNext := Vector3{
+		X: position.X + req.Direction.X*req.Distance,
+		Y: position.Y + verticalMove,
+		Z: position.Z + req.Direction.Z*req.Distance,
+	}
+	next := Vector3{
+		X: clampFloat(rawNext.X, -defaultWorldLimit, defaultWorldLimit),
+		Y: clampFloat(rawNext.Y, defaultSimpleGroundHeight, defaultWorldLimit),
+		Z: clampFloat(rawNext.Z, -defaultWorldLimit, defaultWorldLimit),
+	}
+	grounded := (req.Grounded && !req.Jump && verticalVelocity == 0) || (next.Y <= defaultSimpleGroundHeight && verticalVelocity <= 0)
+	if grounded {
+		verticalVelocity = 0
+	}
+	blocked := next.X != rawNext.X || next.Y != rawNext.Y || next.Z != rawNext.Z
 	w.players[req.PlayerID] = next
-	return MovePlayerResult{Position: next, Blocked: blocked}, nil
+	return MovePlayerResult{Position: next, Blocked: blocked, Grounded: grounded, VerticalVelocity: verticalVelocity}, nil
 }
 
 // GetPlayerPosition 读取玩家当前物理位置
@@ -240,6 +264,17 @@ func (w *SimplePhysicsWorld) BatchRaycast(reqs []RaycastRequest) ([]RaycastHit, 
 		hits[index] = hit
 	}
 	return hits, nil
+}
+
+// nextVerticalVelocity 计算跳跃和重力作用后的垂直速度
+func nextVerticalVelocity(current float64, jump bool, grounded bool, deltaTime float64) float64 {
+	if jump && grounded {
+		return defaultPlayerJumpSpeed + defaultPlayerGravity*deltaTime
+	}
+	if grounded {
+		return 0
+	}
+	return current + defaultPlayerGravity*deltaTime
 }
 
 // raySphereDistance 计算射线命中球体的最近距离

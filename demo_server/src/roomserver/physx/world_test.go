@@ -72,6 +72,26 @@ func TestWorldMoveAndRaycast(t *testing.T) {
 	}
 }
 
+// TestWorldJump 验证 PhysX 后端支持玩家跳跃位移
+func TestWorldJump(t *testing.T) {
+	world := newTestWorld(t)
+	defer closeTestWorld(t, world)
+
+	if err := world.AddPlayer(1, logic.Vector3{X: 0, Y: 0, Z: 0}); err != nil {
+		t.Fatalf("add player: %v", err)
+	}
+	jumpResult, err := world.MovePlayer(logic.MovePlayerRequest{PlayerID: 1, DeltaTime: 0.05, Jump: true, Grounded: true})
+	if err != nil {
+		t.Fatalf("jump player: %v", err)
+	}
+	if jumpResult.Position.Y <= 0 {
+		t.Fatalf("expected player above ground after jump, got y %.4f", jumpResult.Position.Y)
+	}
+	if jumpResult.VerticalVelocity <= 0 || jumpResult.Grounded {
+		t.Fatalf("unexpected jump state: velocity %.4f grounded %v", jumpResult.VerticalVelocity, jumpResult.Grounded)
+	}
+}
+
 // TestWorldSetGetPlayerPosition 验证 PhysX 后端支持玩家位置读写
 func TestWorldSetGetPlayerPosition(t *testing.T) {
 	world := newTestWorld(t)
