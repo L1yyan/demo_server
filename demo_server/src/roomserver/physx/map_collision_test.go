@@ -77,6 +77,27 @@ func TestLoadMapCollisionRejectUnsupportedShape(t *testing.T) {
 	}
 }
 
+// TestLoadMapCollisionMetadata 验证地图元数据读取复用碰撞文件校验
+func TestLoadMapCollisionMetadata(t *testing.T) {
+	path := writeTestMapCollision(t, "map_test", `
+    {
+      "id": "wall_test",
+      "shape": "box",
+      "position": [0, 1, 2],
+      "rotation": [0, 0, 0, 1],
+      "size": [1, 2, 3],
+      "is_trigger": false
+    }`)
+
+	metadata, err := LoadMapCollisionMetadata(path, "map_test")
+	if err != nil {
+		t.Fatalf("load map metadata: %v", err)
+	}
+	if metadata.MapID != "map_test" || metadata.PhysicsHash != "sha256:test" || metadata.ColliderCount != 1 || metadata.SpawnPointCount != 2 {
+		t.Fatalf("unexpected metadata: %+v", metadata)
+	}
+}
+
 // writeTestMapCollision 写入测试用地图碰撞配置
 func writeTestMapCollision(t *testing.T, mapID string, colliderJSON string) string {
 	t.Helper()

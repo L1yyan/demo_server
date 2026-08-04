@@ -54,6 +54,7 @@ type serverState struct {
 
 type roomState struct {
 	id           string                               // 房间ID
+	mode         string                               // 匹配模式或命名房间
 	reservations map[reservationKey]*reservationState // 当前有效占位
 }
 
@@ -130,7 +131,7 @@ func (m *Matcher) AllocateRoom(ctx context.Context, playerID uint64, mode string
 		return reservation.toAllocateResult(), nil
 	}
 
-	server, room, seq, err := m.allocateLocked()
+	server, room, seq, err := m.allocateLocked(mode)
 	if err != nil {
 		return nil, err
 	}
@@ -164,12 +165,12 @@ func (m *Matcher) AllocateRoom(ctx context.Context, playerID uint64, mode string
 	return reservation.toAllocateResult(), nil
 }
 
-// allocateLocked 在锁内选择服务器和房间
-func (m *Matcher) allocateLocked() (*serverState, *roomState, uint64, error) {
+// allocateLocked 在锁内按匹配模式或命名房间选择服务器和房间
+func (m *Matcher) allocateLocked(mode string) (*serverState, *roomState, uint64, error) {
 	for _, server := range m.servers {
-		room := server.findAvailableRoom()
+		room := server.findAvailableRoom(mode)
 		if room == nil {
-			room = server.createRoom()
+			room = server.createRoom(mode)
 		}
 		if room == nil {
 			continue
@@ -193,10 +194,10 @@ func (m *Matcher) purgeExpiredReservations(now time.Time) {
 	}
 }
 
-// findAvailableRoom 查找未满房间
-func (s *serverState) findAvailableRoom() *roomState {
+// findAvailableRoom 查找同匹配模式或命名房间下的未满房间
+func (s *serverState) findAvailableRoom(mode string) *roomState {
 	for _, room := range s.rooms {
-		if room.reservationCount() < s.maxPlayersPerRoom {
+		if room.mode == mode && room.reservationCount() < s.maxPlayersPerRoom {
 			return room
 		}
 	}
@@ -204,11 +205,11 @@ func (s *serverState) findAvailableRoom() *roomState {
 }
 
 // createRoom 创建新房间
-func (s *serverState) createRoom() *roomState {
+func (s *serverState) createRoom(mode string) *roomState {
 	if s.maxRooms > 0 && len(s.rooms) >= s.maxRooms {
 		return nil
 	}
-	room := &roomState{id: fmt.Sprintf("%s-%d", s.id, len(s.rooms)+1), reservations: make(map[reservationKey]*reservationState)}
+	room := &roomState{id: fmt.Sprintf("%s-%d", s.id, len(s.rooms)+1), mode: mode, reservations: make(map[reservationKey]*reservationState)}
 	s.rooms = append(s.rooms, room)
 	return room
 }

@@ -34,6 +34,9 @@ func NewServer(cfg roomconfig.Config) *Server {
 
 // Start 启动 roomserver
 func (s *Server) Start(ctx context.Context) error {
+	if err := s.resolveMapCollisionMetadata(ctx); err != nil {
+		return err
+	}
 	physicsFactory, err := s.newPhysicsWorldFactory()
 	if err != nil {
 		return err
@@ -81,6 +84,34 @@ func (s *Server) Stop(ctx context.Context) {
 		return true
 	})
 	glog.Info(ctx, "roomserver stopped")
+}
+
+// resolveMapCollisionMetadata 校验实际地图碰撞文件并绑定运行时hash
+func (s *Server) resolveMapCollisionMetadata(ctx context.Context) error {
+	backend := strings.ToLower(strings.TrimSpace(s.cfg.PhysicsBackend))
+	if backend == roomconfig.PhysicsBackendSimple {
+		return nil
+	}
+	if backend != "" && backend != roomconfig.PhysicsBackendPhysX {
+		return fmt.Errorf("unknown physics backend: %s", s.cfg.PhysicsBackend)
+	}
+	if !physx.BackendAvailable() {
+		return fmt.Errorf("physx backend requires building with -tags physx")
+	}
+
+	metadata, err := physx.LoadMapCollisionMetadata(s.cfg.MapCollisionPath, s.cfg.DefaultMapID)
+	if err != nil {
+		return fmt.Errorf("load map collision metadata: %w", err)
+	}
+	if strings.TrimSpace(metadata.PhysicsHash) != "" && s.cfg.PhysicsHash != "" && metadata.PhysicsHash != s.cfg.PhysicsHash {
+		glog.Warn(ctx, "roomserver physics hash config differs from map file", glog.String("config_hash", s.cfg.PhysicsHash), glog.String("map_hash", metadata.PhysicsHash))
+	}
+	if strings.TrimSpace(metadata.PhysicsHash) != "" {
+		s.cfg.PhysicsHash = metadata.PhysicsHash
+	}
+
+	glog.Info(ctx, "roomserver map collision loaded", glog.String("map_id", metadata.MapID), glog.Int("map_version", metadata.MapVersion), glog.String("path", s.cfg.MapCollisionPath), glog.String("physics_hash", s.cfg.PhysicsHash), glog.Int("colliders", metadata.ColliderCount), glog.Int("spawn_points", metadata.SpawnPointCount))
+	return nil
 }
 
 // HandleMessage 处理客户端业务消息

@@ -69,7 +69,7 @@ room_server_01:
   physics_ground_plane: true
   default_map_id: "mfps_arena"
   map_collision_path: "config/maps/mfps_arena/collision.json"
-  physics_hash: "sha256:e1328d5d97e68938b5c55f13a7c04553849cdefcdfed8a32ea288275464d9289"
+  physics_hash: "sha256:70921a6cda71319a1bb4e203d23cc60dd09b42854bd5a3785ff892e2ec9387d8"
   prediction_enabled: true
   rollback_window_ticks: 60
   future_input_window_ticks: 8

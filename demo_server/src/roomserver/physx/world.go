@@ -25,6 +25,11 @@ import (
 
 const cErrorBufferSize = 512
 
+// BackendAvailable 返回当前构建是否包含 PhysX 后端
+func BackendAvailable() bool {
+	return true
+}
+
 // Factory 创建 PhysX 物理世界
 type Factory struct {
 	cfg Config // PhysX 后端配置

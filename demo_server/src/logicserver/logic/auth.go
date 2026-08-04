@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"net/mail"
 	"strings"
 	"time"
@@ -17,6 +18,9 @@ import (
 const (
 	invalidLoginParamsMessage = "invalid login params"      // 登录参数错误提示
 	invalidCredentialMessage  = "invalid email or password" // 账号或密码错误提示
+	guestLoginPrefix          = "guest:"                    // 临时玩家登录前缀
+	guestLoginPassword        = "multiplayer-fps-guest"     // 临时玩家登录口令
+	maxGuestDisplayNameLength = 32                          // 临时玩家昵称最大长度
 )
 
 var (
@@ -64,8 +68,15 @@ func (l *AuthLogic) Login(ctx context.Context, email string, password string) (*
 	if l == nil {
 		return nil, errors.New("auth logic is nil")
 	}
-	email = strings.ToLower(strings.TrimSpace(email))
+	email = strings.TrimSpace(email)
 	password = strings.TrimSpace(password)
+	if displayName, ok := parseGuestLogin(email, password); ok {
+		return l.loginGuest(ctx, displayName)
+	}
+	if strings.HasPrefix(strings.ToLower(email), guestLoginPrefix) {
+		return nil, ErrInvalidLoginParams
+	}
+	email = strings.ToLower(email)
 	if !isValidEmail(email) || password == "" {
 		return nil, ErrInvalidLoginParams
 	}
@@ -96,6 +107,20 @@ func (l *AuthLogic) Login(ctx context.Context, email string, password string) (*
 		return nil, err
 	}
 	return &LoginResult{UserID: user.UserID, Email: user.Email, AccessToken: accessToken, RefreshToken: refreshToken}, nil
+}
+
+// loginGuest 为当前 Multiplayer 客户端的昵称登录签发临时 token
+func (l *AuthLogic) loginGuest(ctx context.Context, displayName string) (*LoginResult, error) {
+	userID := guestPlayerID(displayName)
+	identity := guestIdentity(displayName)
+	accessToken, refreshToken, err := l.jwt.GenerateToken(userID, identity)
+	if err != nil {
+		return nil, fmt.Errorf("generate guest token: %w", err)
+	}
+	if err := l.tokens.SaveLoginTokens(ctx, userID, identity, accessToken, refreshToken, l.accessTTL, l.refreshTTL); err != nil {
+		return nil, err
+	}
+	return &LoginResult{UserID: userID, Email: identity, AccessToken: accessToken, RefreshToken: refreshToken}, nil
 }
 
 // VerifyToken 校验登录 token，必要时刷新短 token
@@ -166,4 +191,36 @@ func isValidEmail(email string) bool {
 	}
 	address, err := mail.ParseAddress(email)
 	return err == nil && address.Address == email
+}
+
+// parseGuestLogin 解析当前 Multiplayer 客户端使用的昵称登录请求
+func parseGuestLogin(identifier string, password string) (string, bool) {
+	identifier = strings.TrimSpace(identifier)
+	if !strings.HasPrefix(strings.ToLower(identifier), guestLoginPrefix) {
+		return "", false
+	}
+	if password != guestLoginPassword {
+		return "", false
+	}
+	displayName := strings.TrimSpace(identifier[len(guestLoginPrefix):])
+	if displayName == "" {
+		return "", false
+	}
+	runes := []rune(displayName)
+	if len(runes) > maxGuestDisplayNameLength {
+		displayName = string(runes[:maxGuestDisplayNameLength])
+	}
+	return displayName, true
+}
+
+// guestPlayerID 根据昵称生成稳定的临时玩家ID
+func guestPlayerID(displayName string) uint64 {
+	hasher := fnv.New64a()
+	_, _ = hasher.Write([]byte(guestIdentity(displayName)))
+	return hasher.Sum64() | (uint64(1) << 63)
+}
+
+// guestIdentity 生成写入 JWT 和 Redis 登录态的临时身份字符串
+func guestIdentity(displayName string) string {
+	return guestLoginPrefix + strings.TrimSpace(displayName)
 }

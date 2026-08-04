@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	roomconfig "demo_server/src/roomserver/config"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -27,6 +29,7 @@ type Config struct {
 	JWT           JwtConfig         `yaml:"jwt"`             // JWT配置
 	LogicServer01 LogicServerConfig `yaml:"logic_server_01"` // logicserver配置
 	MatchServer01 MatchServerConfig `yaml:"match_server_01"` // matchserver配置
+	RoomServer01  roomconfig.Config `yaml:"room_server_01"`  // roomserver配置
 }
 
 // LogConfig 日志配置
@@ -147,6 +150,11 @@ func (c *Config) normalize() {
 		if c.MatchServer01.RoomServers[index].MaxPlayersPerRoom <= 0 {
 			c.MatchServer01.RoomServers[index].MaxPlayersPerRoom = c.MatchServer01.MaxPlayersPerRoom
 		}
+	}
+	if c.RoomServer01 == (roomconfig.Config{}) {
+		c.RoomServer01 = roomconfig.DefaultConfig()
+	} else {
+		c.RoomServer01 = c.RoomServer01.Normalize()
 	}
 }
 

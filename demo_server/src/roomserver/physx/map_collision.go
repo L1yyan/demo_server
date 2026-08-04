@@ -77,6 +77,30 @@ type Vector3Raw [3]float64
 // 用数组是为了和 Unity 导出格式保持一致
 type QuatRaw [4]float64
 
+// MapCollisionMetadata 地图碰撞文件元数据
+type MapCollisionMetadata struct {
+	MapID           string // 地图ID
+	MapVersion      int    // 地图版本
+	PhysicsHash     string // 物理数据hash
+	ColliderCount   int    // 碰撞体数量
+	SpawnPointCount int    // 出生点数量
+}
+
+// LoadMapCollisionMetadata 加载并校验地图碰撞元数据
+func LoadMapCollisionMetadata(path string, expectedMapID string) (MapCollisionMetadata, error) {
+	collision, err := loadMapCollision(path, expectedMapID)
+	if err != nil {
+		return MapCollisionMetadata{}, err
+	}
+	return MapCollisionMetadata{
+		MapID:           collision.MapID,
+		MapVersion:      collision.MapVersion,
+		PhysicsHash:     collision.PhysicsHash,
+		ColliderCount:   len(collision.Colliders),
+		SpawnPointCount: len(collision.SpawnPoints),
+	}, nil
+}
+
 // loadMapCollision 加载并校验地图碰撞配置
 func loadMapCollision(path string, expectedMapID string) (*MapCollision, error) {
 	resolvedPath, err := resolveProjectPath(path)

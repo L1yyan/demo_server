@@ -102,6 +102,39 @@ func TestMatcherDuplicatePlayerReusesReservation(t *testing.T) {
 	}
 }
 
+// TestMatcherNamedRoomsAreIsolated 验证命名房间只复用同名房间
+func TestMatcherNamedRoomsAreIsolated(t *testing.T) {
+	matcher, err := NewMatcher(conf.MatchServerConfig{
+		TokenSecret: "test-room-token-secret",
+		RoomServers: []conf.RoomServerNodeConfig{
+			{ServerID: "room-01", ServerAddr: "127.0.0.1:9001", MaxRooms: 4},
+		},
+	})
+	if err != nil {
+		t.Fatalf("new matcher: %v", err)
+	}
+
+	first, err := matcher.AllocateRoom(context.Background(), 1, "room:alpha")
+	if err != nil {
+		t.Fatalf("allocate alpha first player: %v", err)
+	}
+	second, err := matcher.AllocateRoom(context.Background(), 2, "room:alpha")
+	if err != nil {
+		t.Fatalf("allocate alpha second player: %v", err)
+	}
+	third, err := matcher.AllocateRoom(context.Background(), 3, "room:beta")
+	if err != nil {
+		t.Fatalf("allocate beta player: %v", err)
+	}
+
+	if first.RoomID != second.RoomID {
+		t.Fatalf("expected same named room to share room id, got %q and %q", first.RoomID, second.RoomID)
+	}
+	if third.RoomID == first.RoomID {
+		t.Fatalf("expected different named rooms to use different room ids, got %q", third.RoomID)
+	}
+}
+
 // TestMatcherExpiredReservationReleasesRoomSlot 验证过期占位会释放房间名额
 func TestMatcherExpiredReservationReleasesRoomSlot(t *testing.T) {
 	now := time.Unix(100, 0)

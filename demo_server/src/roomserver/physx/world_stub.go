@@ -10,6 +10,11 @@ import (
 
 var errPhysXBuildTagDisabled = errors.New("physx backend requires building with -tags physx")
 
+// BackendAvailable 返回当前构建是否包含 PhysX 后端
+func BackendAvailable() bool {
+	return false
+}
+
 // Factory 创建 PhysX 物理世界
 //
 // 未启用 physx build tag 时保留该类型，用于在配置错误时给出明确错误
