@@ -32,6 +32,28 @@ func TestDefaultConfigMapCollisionPath(t *testing.T) {
 	}
 }
 
+// TestDefaultConfigPhysXPVD 验证默认 PhysX PVD 配置只保留连接参数不主动启用
+func TestDefaultConfigPhysXPVD(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.PhysXPVDEnabled {
+		t.Fatal("expected physx pvd disabled by default")
+	}
+	if cfg.PhysXPVDHost != DefaultPhysXPVDHost || cfg.PhysXPVDPort != DefaultPhysXPVDPort || cfg.PhysXPVDTimeoutMS != DefaultPhysXPVDTimeoutMS {
+		t.Fatalf("unexpected physx pvd config: host=%s port=%d timeout=%d", cfg.PhysXPVDHost, cfg.PhysXPVDPort, cfg.PhysXPVDTimeoutMS)
+	}
+}
+
+// TestNormalizePhysXPVD 验证非法 PhysX PVD 连接参数会回退默认值
+func TestNormalizePhysXPVD(t *testing.T) {
+	cfg := Config{PhysXPVDEnabled: true, PhysXPVDHost: "  ", PhysXPVDPort: -1, PhysXPVDTimeoutMS: 0}.Normalize()
+	if !cfg.PhysXPVDEnabled {
+		t.Fatal("expected physx pvd enabled flag preserved")
+	}
+	if cfg.PhysXPVDHost != DefaultPhysXPVDHost || cfg.PhysXPVDPort != DefaultPhysXPVDPort || cfg.PhysXPVDTimeoutMS != DefaultPhysXPVDTimeoutMS {
+		t.Fatalf("unexpected normalized physx pvd config: host=%s port=%d timeout=%d", cfg.PhysXPVDHost, cfg.PhysXPVDPort, cfg.PhysXPVDTimeoutMS)
+	}
+}
+
 // TestDefaultConfigMaxInputHoldTicks 验证默认弱网输入沿用窗口
 func TestDefaultConfigMaxInputHoldTicks(t *testing.T) {
 	cfg := DefaultConfig()

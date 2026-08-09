@@ -202,7 +202,8 @@ scripts/build_all.sh
 2. 从 NVIDIA PhysX 仓库拉取源码到 `third_party/PhysX`。
 3. 使用 PhysX 官方 preset `linux-gcc-cpu-only` 生成 Linux 构建工程。
 4. 只构建服务端需要的核心 PhysX 库。
-5. 将头文件和库整理到 `third_party/physx-sdk`。
+5. 默认构建 `checked` 配置，确保 `PX_SUPPORT_PVD=1`，PVD 调试数据可输出。
+6. 将头文件和库整理到 `third_party/physx-sdk`。
 
 当前只构建这些核心库：
 
@@ -211,6 +212,7 @@ PhysX
 PhysXExtensions
 PhysXPvdSDK
 PhysXCommon
+PhysXCooking
 PhysXFoundation
 ```
 
@@ -218,11 +220,14 @@ PhysXFoundation
 
 - `PhysXFoundation`：底层基础设施，内存、错误回调、平台抽象。
 - `PhysXCommon`：通用几何、碰撞查询、mesh 等基础能力。
+- `PhysXCooking`：mesh、heightfield 等 cooking 能力，PhysXExtensions 的 RepX 序列化会依赖它。
 - `PhysX`：核心物理 SDK，scene、actor、rigid body 等主要 API。
 - `PhysXExtensions`：一些默认扩展工具，例如默认 dispatcher、默认 filter shader、plane 创建等。
 - `PhysXPvdSDK`：PhysX Visual Debugger 相关支持。当前链接它是为了满足 PhysX 静态库依赖。
 
 没有构建 PhysX snippets。原因是 snippets 会依赖 OpenGL/X11 示例渲染环境，而服务端物理不需要这些依赖。之前全量构建时遇到过 `X11/Xlib.h` 缺失，所以脚本改成只构建核心库。
+
+需要注意：PhysX 的 release 配置会关闭 `PX_SUPPORT_PVD`，即使 socket 连接成功也不会输出完整 PVD scene 数据。因此脚本默认使用 checked 构建，再复制到 cgo 固定读取的 `third_party/physx-sdk/lib/linux.x86_64/release` 目录。
 
 构建成功后的 SDK 目录结构大致是：
 
@@ -239,6 +244,7 @@ third_party/physx-sdk
             ├── libPhysXExtensions_static_64.a
             ├── libPhysXPvdSDK_static_64.a
             ├── libPhysXCommon_static_64.a
+            ├── libPhysXCooking_static_64.a
             └── libPhysXFoundation_static_64.a
 ```
 
@@ -265,6 +271,10 @@ PhysicsBackend      string
 PlayerCapsuleRadius float64
 PlayerCapsuleHeight float64
 PhysicsGroundPlane  bool
+PhysXPVDEnabled     bool
+PhysXPVDHost        string
+PhysXPVDPort        int
+PhysXPVDTimeoutMS   int
 DefaultMapID        string
 MapCollisionPath    string
 ```
@@ -272,12 +282,16 @@ MapCollisionPath    string
 默认值是：
 
 ```go
-PhysicsBackend:      "physx"
+PhysicsBackend:    "physx"
 PlayerCapsuleRadius: 0.35
 PlayerCapsuleHeight: 1.8
 PhysicsGroundPlane:  true
-DefaultMapID:        "map_001"
-MapCollisionPath:    "config/maps/map_001/collision.json"
+PhysXPVDEnabled:     false
+PhysXPVDHost:        "127.0.0.1"
+PhysXPVDPort:        5425
+PhysXPVDTimeoutMS:   100
+DefaultMapID:        "mfps_arena"
+MapCollisionPath:    "config/maps/mfps_arena/collision.json"
 ```
 
 对应 `config/config.yaml` 中的配置是：
@@ -287,8 +301,12 @@ physics_backend: "physx"
 player_capsule_radius: 0.35
 player_capsule_height: 1.8
 physics_ground_plane: true
-default_map_id: "map_001"
-map_collision_path: "config/maps/map_001/collision.json"
+physx_pvd_enabled: false
+physx_pvd_host: "127.0.0.1"
+physx_pvd_port: 5425
+physx_pvd_timeout_ms: 100
+default_map_id: "mfps_arena"
+map_collision_path: "config/maps/mfps_arena/collision.json"
 ```
 
 配置含义：
@@ -297,10 +315,13 @@ map_collision_path: "config/maps/map_001/collision.json"
 - `player_capsule_radius`：玩家胶囊体半径。半径越大，玩家越“胖”，越不容易穿过狭窄空间。
 - `player_capsule_height`：玩家胶囊体总高度。必须大于两倍半径，否则胶囊体不合法。
 - `physics_ground_plane`：是否创建默认 y=0 地面。
+- `physx_pvd_enabled`：是否启用 PhysX Visual Debugger，默认关闭。
+- `physx_pvd_host` / `physx_pvd_port`：PVD 工具监听地址和端口，默认 `127.0.0.1:5425`。
+- `physx_pvd_timeout_ms`：PVD socket 连接超时毫秒数。
 - `default_map_id`：当前 roomserver 默认加载的地图 ID。
 - `map_collision_path`：Unity 导出的服务端地图碰撞 JSON 路径。
 
-当前默认加载 `map_001` 的 box 静态碰撞体；默认地面可以保留作为兜底，后续确认地图地面稳定后也可以按配置关闭。
+当前默认加载 `mfps_arena` 的 box 静态碰撞体；默认地面可以保留作为兜底，后续确认地图地面稳定后也可以按配置关闭。
 
 ## 5. 服务启动流程
 
@@ -586,7 +607,7 @@ physx backend requires building with -tags physx
 
 这样不会静默降级，避免误以为已经启用 PhysX。
 
-当前 `MovePlayerRequest` 会携带 `DeltaTime`、`Jump`、`Grounded` 和 `VerticalVelocity`，PhysX C++ 层使用房间 tick 对应的步长执行 `simulate(delta_time)`，并用 capsule sweep 同时处理水平移动和跳跃垂直位移。Go 封装也提供 `GetPlayerPosition` 和 `SetPlayerPosition`，用于纠偏、测试和后续服务端回滚基础。
+当前 `MovePlayerRequest` 会携带 `DeltaTime`、`Jump`、`Grounded` 和 `VerticalVelocity`，PhysX C++ 层使用房间 tick 对应的步长执行 `simulate(delta_time)`，并用 capsule sweep 同时处理水平移动和跳跃垂直位移。Go 封装也提供 `GetPlayerPosition` 和 `SetPlayerPosition`，用于复活同步、测试和后续服务端状态同步基础。
 
 ### 11.1 为什么要有 Go 封装层
 
@@ -633,6 +654,9 @@ C++ 层内部的进程级 `px_runtime` 持有：
 ```cpp
 PxFoundation* foundation;
 PxPhysics* physics;
+PxPvd* pvd;
+PxPvdTransport* pvd_transport;
+bool pvd_enabled;
 int ref_count;
 ```
 
@@ -669,7 +693,10 @@ Go
 
 ```text
 acquire_runtime
-  -> 首个 world 创建 PxCreateFoundation / PxCreatePhysics
+  -> 首个 world 创建 PxCreateFoundation
+  -> 如果开启 PVD，创建 PxPvd 和 socket transport 并连接 PVD 工具
+  -> 创建 PxCreatePhysics，传入 PVD 或 nullptr
+  -> PxInitExtensions，传入 PxPhysics 和 PVD
   -> 后续 world 复用进程级 runtime 并增加引用计数
 -> PxDefaultCpuDispatcherCreate
 -> createScene
@@ -685,9 +712,26 @@ PxCreatePlane(*world->physics, PxPlane(0, 1, 0, 0), *world->material)
 
 默认地面是 `PxRigidStatic`。它不会移动，主要用于阻挡玩家往 y<0 掉落，也给后续测试 raycast 提供一个静态碰撞体。
 
-当前第一阶段已经支持从 `config/maps/map_001/collision.json` 加载 Unity 导出的 box 静态碰撞体。mesh cooking、sphere、capsule 和 trigger 区域会在后续按玩法需要扩展。
+当前第一阶段已经支持从 `config/maps/mfps_arena/collision.json` 加载 Unity 导出的 box 静态碰撞体。mesh cooking、sphere、capsule 和 trigger 区域会在后续按玩法需要扩展。
 
-### 13.1 创建顺序为什么重要
+### 13.1 PhysX PVD 调试
+
+PVD 是 PhysX Visual Debugger，用来观察 PhysX scene、actor、shape、raycast 和 sweep 等调试数据。roomserver 默认关闭 PVD，避免没有打开 PVD 工具时影响启动，也避免调试数据传输影响性能。
+
+本地开启方式：
+
+```yaml
+physx_pvd_enabled: true
+physx_pvd_host: "127.0.0.1"
+physx_pvd_port: 5425
+physx_pvd_timeout_ms: 100
+```
+
+开启前需要先打开 NVIDIA PhysX Visual Debugger 并监听对应端口。启用后，C++ 层会在进程级 runtime 创建 `PxPvd` 和 `PxDefaultPvdSocketTransportCreate`，创建 `PxPhysics` 后调用 `PxInitExtensions(*physics, pvd)`，并在每个房间 `PxScene` 上开启 contacts、scene queries、constraints 传输。当前玩家移动使用 sweep，开火使用 raycast，所以 `eTRANSMIT_SCENEQUERIES` 对排查碰撞和射线问题很关键。
+
+如果 `physx_pvd_enabled=true` 但 PVD 工具不可连接，或当前 PhysX 库没有启用 PVD scene client，roomserver 会在创建房间 PhysX world 时失败并返回连接或 scene client 错误，避免误以为可视化调试已经生效。
+
+### 13.2 创建顺序为什么重要
 
 PhysX 对象之间有依赖关系：
 
@@ -833,7 +877,7 @@ type MovePlayerResult struct {
 }
 ```
 
-目前 Go 层使用 `Position` 更新玩家坐标，并用 `Grounded` 和 `VerticalVelocity` 维护跳跃状态；`Blocked` 预留给后续做客户端纠偏、碰撞反馈或状态同步。
+目前 Go 层使用 `Position` 更新玩家坐标，并用 `Grounded` 和 `VerticalVelocity` 维护跳跃状态；`Blocked` 预留给后续做复活同步、碰撞反馈或状态同步。
 
 ## 16. 开火 Raycast
 
@@ -970,11 +1014,12 @@ Room.updatePlayers
 - 每房间独立 PhysX scene。
 - 玩家 capsule actor。
 - 默认 ground plane。
-- 加载 `map_001` 的 box 静态地图碰撞。
+- 加载 `mfps_arena` 的 box 静态地图碰撞。
 - 按地图 `spawn_points` 分配 `spawn_a` / `spawn_b`。
 - 服务端 tick 中通过 PhysX 推进玩家位置。
 - PhysX raycast 查询。
 - 玩家离房和房间停止时释放资源。
+- 可通过配置开启 PhysX PVD 调试 scene、actor、raycast 和 sweep。
 
 后续还需要补：
 

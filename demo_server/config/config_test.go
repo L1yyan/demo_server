@@ -34,6 +34,9 @@ func TestLoadRoomServerConfig(t *testing.T) {
 	if cfg.RoomServer01.MapCollisionPath != "config/maps/mfps_arena/collision.json" {
 		t.Fatalf("unexpected roomserver collision path: %s", cfg.RoomServer01.MapCollisionPath)
 	}
+	if cfg.RoomServer01.PhysXPVDHost == "" || cfg.RoomServer01.PhysXPVDPort <= 0 || cfg.RoomServer01.PhysXPVDTimeoutMS <= 0 {
+		t.Fatalf("invalid roomserver physx pvd config: enabled=%v host=%s port=%d timeout=%d", cfg.RoomServer01.PhysXPVDEnabled, cfg.RoomServer01.PhysXPVDHost, cfg.RoomServer01.PhysXPVDPort, cfg.RoomServer01.PhysXPVDTimeoutMS)
+	}
 	if cfg.RoomServer01.MaxInputHoldTicks != 3 {
 		t.Fatalf("expected yaml max input hold ticks 3, got %d", cfg.RoomServer01.MaxInputHoldTicks)
 	}

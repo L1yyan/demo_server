@@ -8,12 +8,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	roompb "demo_server/gen/room"
 	"demo_server/pkg/glog"
 	roomconfig "demo_server/src/roomserver/config"
 	"demo_server/src/roomserver/logic"
 	"demo_server/src/roomserver/physx"
 	"demo_server/src/roomserver/protocol"
-
 	"github.com/xtaci/kcp-go/v5"
 )
 
@@ -42,16 +42,7 @@ func (s *Server) Start(ctx context.Context) error {
 		return err
 	}
 	syncConfig := logic.SyncConfig{
-		PredictionEnabled:          s.cfg.PredictionEnabled,
-		RollbackWindowTicks:        s.cfg.RollbackWindowTicks,
-		FutureInputWindowTicks:     s.cfg.FutureInputWindowTicks,
-		PredictionKeyframeInterval: s.cfg.PredictionKeyframeInterval,
-		PositionTolerance:          s.cfg.PositionTolerance,
-		HardPositionTolerance:      s.cfg.HardPositionTolerance,
-		AngleTolerance:             s.cfg.AngleTolerance,
-		MaxInputBatchFrames:        s.cfg.MaxInputBatchFrames,
-		MaxInputHoldTicks:          s.cfg.MaxInputHoldTicks,
-		CorrectionMinIntervalTicks: s.cfg.CorrectionMinIntervalTicks,
+		MaxInputHoldTicks: s.cfg.MaxInputHoldTicks,
 	}
 	manager := logic.NewRoomManagerWithOptions(ctx, s.cfg.MaxRooms, s.cfg.MaxPlayersPerRoom, s.cfg.TickRate, s.cfg.SnapshotRate, syncConfig, s.cfg.DefaultMapID, s.cfg.PhysicsHash, s.cfg.GameDuration, logic.NewSimpleAOIFilter(), physicsFactory)
 	listener, err := kcp.ListenWithOptions(s.cfg.ListenAddr, nil, 10, 3)
@@ -63,7 +54,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.manager = manager
 	s.listener = listener
-	glog.Info(ctx, "roomserver started", glog.String("addr", s.cfg.ListenAddr), glog.String("server_id", s.cfg.ServerID), glog.String("physics_backend", s.cfg.PhysicsBackend))
+	glog.Info(ctx, "roomserver started", glog.String("addr", s.cfg.ListenAddr), glog.String("server_id", s.cfg.ServerID), glog.String("physics_backend", s.cfg.PhysicsBackend), glog.Bool("physx_pvd_enabled", s.cfg.PhysXPVDEnabled), glog.String("physx_pvd_addr", fmt.Sprintf("%s:%d", s.cfg.PhysXPVDHost, s.cfg.PhysXPVDPort)))
 
 	go s.acceptLoop(ctx)
 	return nil
@@ -123,8 +114,6 @@ func (s *Server) HandleMessage(ctx context.Context, session *Session, message pr
 		s.handleHeartbeat(session, message)
 	case protocol.MsgPlayerInput:
 		s.handlePlayerInput(ctx, session, message)
-	case protocol.MsgPlayerInputBatch:
-		s.handlePlayerInputBatch(ctx, session, message)
 	case protocol.MsgPlayerStatsQuery:
 		s.handlePlayerStatsQuery(ctx, session, message)
 	default:
@@ -152,6 +141,10 @@ func (s *Server) newPhysicsWorldFactory() (logic.PhysicsWorldFactory, error) {
 			PlayerCapsuleRadius: s.cfg.PlayerCapsuleRadius,
 			PlayerCapsuleHeight: s.cfg.PlayerCapsuleHeight,
 			CreateGroundPlane:   s.cfg.PhysicsGroundPlane,
+			PVDEnabled:          s.cfg.PhysXPVDEnabled,
+			PVDHost:             s.cfg.PhysXPVDHost,
+			PVDPort:             s.cfg.PhysXPVDPort,
+			PVDTimeoutMS:        s.cfg.PhysXPVDTimeoutMS,
 			DefaultMapID:        s.cfg.DefaultMapID,
 			MapCollisionPath:    s.cfg.MapCollisionPath,
 		}), nil
@@ -192,7 +185,8 @@ func (s *Server) acceptLoop(ctx context.Context) {
 
 // handleJoinRoom 处理入房请求
 func (s *Server) handleJoinRoom(ctx context.Context, session *Session, message protocol.Message) {
-	request, err := protocol.DecodeJSON[protocol.JoinRoomRequest](message)
+	var request roompb.JoinRoomReq
+	err := protocol.DecodeProto(message, &request)
 	if err != nil {
 		s.sendError(session, "bad_request", "invalid join room request")
 		return
@@ -213,14 +207,12 @@ func (s *Server) handleJoinRoom(ctx context.Context, session *Session, message p
 
 	session.SetPlayer(claims.PlayerID, claims.RoomID)
 	player := &logic.Player{
-		ID:                claims.PlayerID,
-		RoomID:            claims.RoomID,
-		Session:           session,
-		SyncVersion:       request.SyncVersion,
-		PredictionEnabled: request.PredictionEnabled,
-		PhysicsHash:       request.PhysicsHash,
+		ID:      claims.PlayerID,
+		RoomID:  claims.RoomID,
+		Session: session,
 	}
 	if err := s.manager.JoinRoom(claims.RoomID, player); err != nil {
+		glog.Warn(ctx, "join room failed", glog.String("room_id", claims.RoomID), glog.Uint64("player_id", claims.PlayerID), glog.Err(err))
 		s.sendError(session, "join_failed", err.Error())
 		return
 	}
@@ -236,23 +228,26 @@ func (s *Server) handlePlayerStatsQuery(ctx context.Context, session *Session, m
 		s.sendError(session, "stats_failed", "room manager not started")
 		return
 	}
-
-	request := protocol.PlayerStatsQuery{}
+	var request roompb.PlayerStatsReq
 	if len(message.Payload) > 0 {
-		decoded, err := protocol.DecodeJSON[protocol.PlayerStatsQuery](message)
+		err := protocol.DecodeProto(message, &request)
 		if err != nil {
 			s.sendError(session, "bad_request", "invalid player stats query")
 			return
 		}
-		request = decoded
 	}
-	statsSnapshot, err := s.manager.QueryPlayerStats(session.PlayerID(), request.PlayerID)
+	statsSnapshot, err := s.manager.QueryPlayerStats(session.PlayerID(), request.PlayerId)
 	if err != nil {
-		glog.Warn(ctx, "query player stats failed", glog.String("session_id", session.ID()), glog.Uint64("player_id", session.PlayerID()), glog.Uint64("target_player_id", request.PlayerID), glog.Err(err))
+		glog.Warn(ctx, "query player stats failed", glog.String("session_id", session.ID()), glog.Uint64("player_id", session.PlayerID()), glog.Uint64("target_player_id", request.PlayerId), glog.Err(err))
 		s.sendError(session, "stats_failed", err.Error())
 		return
 	}
-	response, err := protocol.NewJSONMessage(protocol.MsgPlayerStatsResp, protocol.PlayerStatsResp{OK: true, Content: "ok", RoomID: statsSnapshot.RoomID, ServerTick: statsSnapshot.ServerTick, Stats: statsSnapshot.Stats})
+	statsSnapshotpb := roompb.PlayerStats{
+		PlayerId:   statsSnapshot.Stats.PlayerID,
+		KillCount:  int32(statsSnapshot.Stats.KillCount),
+		DeathCount: int32(statsSnapshot.Stats.DeathCount),
+	}
+	response, err := protocol.NewProtoMessage(protocol.MsgPlayerStatsResp, &roompb.PlayerStatsResp{Status: true, Content: "ok", RoomId: statsSnapshot.RoomID, ServerTick: statsSnapshot.ServerTick, Stats: &statsSnapshotpb})
 	if err != nil {
 		return
 	}
@@ -261,12 +256,13 @@ func (s *Server) handlePlayerStatsQuery(ctx context.Context, session *Session, m
 
 // handleHeartbeat 处理心跳
 func (s *Server) handleHeartbeat(session *Session, requestMessage protocol.Message) {
-	request, _ := protocol.DecodeJSON[protocol.Heartbeat](requestMessage)
+	var request roompb.Heartbeat
+	protocol.DecodeProto(requestMessage, &request)
 	serverTick := int64(0)
 	if s.manager != nil && session.PlayerID() != 0 {
 		serverTick = s.manager.RoomTick(session.PlayerID())
 	}
-	message, err := protocol.NewJSONMessage(protocol.MsgHeartbeatAck, protocol.Heartbeat{ClientTime: request.ClientTime, ServerTime: time.Now().UnixMilli(), ServerTick: serverTick})
+	message, err := protocol.NewProtoMessage(protocol.MsgHeartbeatAck, &roompb.Heartbeat{ClientTime: request.ClientTime, ServerTime: time.Now().UnixMilli(), ServerTick: serverTick})
 	if err != nil {
 		return
 	}
@@ -279,41 +275,21 @@ func (s *Server) handlePlayerInput(ctx context.Context, session *Session, messag
 		s.sendError(session, "not_joined", "player not joined room")
 		return
 	}
-	input, err := protocol.DecodeJSON[protocol.PlayerInput](message)
-	if err != nil {
+	var inputpb roompb.PlayerInput
+	if err := protocol.DecodeProto(message, &inputpb); err != nil {
 		s.sendError(session, "bad_request", "invalid player input")
 		return
 	}
-	if err := s.manager.PushInput(session.PlayerID(), input); err != nil {
-		glog.Warn(ctx, "push player input failed", glog.String("session_id", session.ID()), glog.Uint64("player_id", session.PlayerID()), glog.Err(err))
-		s.sendError(session, "input_failed", err.Error())
-	}
-}
 
-// handlePlayerInputBatch 处理批量玩家输入
-func (s *Server) handlePlayerInputBatch(ctx context.Context, session *Session, message protocol.Message) {
-	if session.PlayerID() == 0 {
-		s.sendError(session, "not_joined", "player not joined room")
-		return
-	}
-	batch, err := protocol.DecodeJSON[protocol.PlayerInputBatch](message)
-	if err != nil {
-		s.sendError(session, "bad_request", "invalid player input batch")
-		return
-	}
-	if len(batch.Frames) == 0 || len(batch.Frames) > s.cfg.MaxInputBatchFrames {
-		s.sendError(session, "bad_request", "invalid input batch frame count")
-		return
-	}
-	if err := s.manager.PushInputBatch(session.PlayerID(), batch); err != nil {
-		glog.Warn(ctx, "push player input batch failed", glog.String("session_id", session.ID()), glog.Uint64("player_id", session.PlayerID()), glog.Err(err))
+	if err := s.manager.PushInput(session.PlayerID(), &inputpb); err != nil {
+		glog.Warn(ctx, "push player input failed", glog.String("session_id", session.ID()), glog.Uint64("player_id", session.PlayerID()), glog.Err(err))
 		s.sendError(session, "input_failed", err.Error())
 	}
 }
 
 // sendError 发送错误响应
 func (s *Server) sendError(session *Session, code string, content string) {
-	message, err := protocol.NewJSONMessage(protocol.MsgError, protocol.ErrorResponse{Code: code, Content: content})
+	message, err := protocol.NewProtoMessage(protocol.MsgError, &roompb.ErrorResp{Code: code, Content: content})
 	if err != nil {
 		return
 	}

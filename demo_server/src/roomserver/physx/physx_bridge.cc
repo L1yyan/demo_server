@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <unordered_map>
@@ -24,6 +25,10 @@ struct px_runtime {
     PxDefaultErrorCallback error_callback;
     PxFoundation* foundation;
     PxPhysics* physics;
+    PxPvd* pvd;
+    PxPvdTransport* pvd_transport;
+    bool pvd_enabled;
+    bool extensions_initialized;
     int ref_count;
 };
 
@@ -116,9 +121,86 @@ px_vec3 actor_player_position(PxRigidDynamic* actor, double height) {
     return px_vec3{static_cast<double>(pose.p.x), static_cast<double>(pose.p.y) - height * 0.5, static_cast<double>(pose.p.z)};
 }
 
-px_runtime* acquire_runtime(char* err, int err_len) {
+void cleanup_runtime(px_runtime* runtime) {
+    if (runtime == nullptr) {
+        return;
+    }
+    if (runtime->extensions_initialized) {
+        PxCloseExtensions();
+        runtime->extensions_initialized = false;
+    }
+    if (runtime->physics != nullptr) {
+        runtime->physics->release();
+        runtime->physics = nullptr;
+    }
+    if (runtime->pvd != nullptr) {
+        runtime->pvd->disconnect();
+        runtime->pvd->release();
+        runtime->pvd = nullptr;
+    }
+    if (runtime->pvd_transport != nullptr) {
+        runtime->pvd_transport->release();
+        runtime->pvd_transport = nullptr;
+    }
+    if (runtime->foundation != nullptr) {
+        runtime->foundation->release();
+        runtime->foundation = nullptr;
+    }
+}
+
+bool init_pvd(px_runtime* runtime, px_pvd_config config, char* err, int err_len) {
+    if (config.enabled == 0) {
+        return true;
+    }
+    if (config.host == nullptr || config.host[0] == '\0' || config.port <= 0 || config.timeout_ms == 0) {
+        set_error(err, err_len, "invalid pvd config");
+        return false;
+    }
+
+    runtime->pvd = PxCreatePvd(*runtime->foundation);
+    if (runtime->pvd == nullptr) {
+        set_error(err, err_len, "create pvd failed");
+        return false;
+    }
+    runtime->pvd_transport = PxDefaultPvdSocketTransportCreate(config.host, config.port, config.timeout_ms);
+    if (runtime->pvd_transport == nullptr) {
+        set_error(err, err_len, "create pvd transport failed");
+        return false;
+    }
+    if (!runtime->pvd->connect(*runtime->pvd_transport, PxPvdInstrumentationFlag::eALL)) {
+        char message[256];
+        std::snprintf(message, sizeof(message), "connect pvd failed: %s:%d", config.host, config.port);
+        set_error(err, err_len, message);
+        return false;
+    }
+    runtime->pvd_enabled = true;
+    return true;
+}
+
+bool configure_scene_pvd(PxScene* scene, char* err, int err_len) {
+    if (scene == nullptr) {
+        set_error(err, err_len, "scene is nil");
+        return false;
+    }
+    PxPvdSceneClient* pvd_client = scene->getScenePvdClient();
+    if (pvd_client == nullptr) {
+        set_error(err, err_len, "pvd scene client unavailable");
+        return false;
+    }
+
+    pvd_client->setScenePvdFlag(PxPvdSceneFlag::eTRANSMIT_CONTACTS, true);
+    pvd_client->setScenePvdFlag(PxPvdSceneFlag::eTRANSMIT_SCENEQUERIES, true);
+    pvd_client->setScenePvdFlag(PxPvdSceneFlag::eTRANSMIT_CONSTRAINTS, true);
+    return true;
+}
+
+px_runtime* acquire_runtime(px_pvd_config pvd_config, char* err, int err_len) {
     std::lock_guard<std::mutex> lock(g_runtime_mutex);
     if (g_runtime != nullptr) {
+        if (pvd_config.enabled != 0 && !g_runtime->pvd_enabled) {
+            set_error(err, err_len, "pvd must be enabled before physx runtime is created");
+            return nullptr;
+        }
         ++g_runtime->ref_count;
         return g_runtime;
     }
@@ -131,13 +213,26 @@ px_runtime* acquire_runtime(char* err, int err_len) {
         return nullptr;
     }
 
-    runtime->physics = PxCreatePhysics(PX_PHYSICS_VERSION, *runtime->foundation, PxTolerancesScale(), true, nullptr);
-    if (runtime->physics == nullptr) {
-        set_error(err, err_len, "create physics failed");
-        runtime->foundation->release();
+    if (!init_pvd(runtime, pvd_config, err, err_len)) {
+        cleanup_runtime(runtime);
         delete runtime;
         return nullptr;
     }
+
+    runtime->physics = PxCreatePhysics(PX_PHYSICS_VERSION, *runtime->foundation, PxTolerancesScale(), true, runtime->pvd);
+    if (runtime->physics == nullptr) {
+        set_error(err, err_len, "create physics failed");
+        cleanup_runtime(runtime);
+        delete runtime;
+        return nullptr;
+    }
+    if (!PxInitExtensions(*runtime->physics, runtime->pvd)) {
+        set_error(err, err_len, "init physx extensions failed");
+        cleanup_runtime(runtime);
+        delete runtime;
+        return nullptr;
+    }
+    runtime->extensions_initialized = true;
 
     runtime->ref_count = 1;
     g_runtime = runtime;
@@ -161,12 +256,7 @@ void release_runtime(px_runtime* runtime) {
 
     px_runtime* released = g_runtime;
     g_runtime = nullptr;
-    if (released->physics != nullptr) {
-        released->physics->release();
-    }
-    if (released->foundation != nullptr) {
-        released->foundation->release();
-    }
+    cleanup_runtime(released);
     delete released;
 }
 
@@ -181,8 +271,8 @@ PxPhysics* world_physics(px_world* world) {
 
 extern "C" {
 
-px_world* px_world_create(int create_ground_plane, char* err, int err_len) {
-    px_runtime* runtime = acquire_runtime(err, err_len);
+px_world* px_world_create(int create_ground_plane, px_pvd_config pvd_config, char* err, int err_len) {
+    px_runtime* runtime = acquire_runtime(pvd_config, err, err_len);
     if (runtime == nullptr) {
         return nullptr;
     }
@@ -204,6 +294,10 @@ px_world* px_world_create(int create_ground_plane, char* err, int err_len) {
     world->scene = runtime->physics->createScene(scene_desc);
     if (world->scene == nullptr) {
         set_error(err, err_len, "create scene failed");
+        px_world_release(world);
+        return nullptr;
+    }
+    if (runtime->pvd_enabled && !configure_scene_pvd(world->scene, err, err_len)) {
         px_world_release(world);
         return nullptr;
     }

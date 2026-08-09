@@ -4,13 +4,14 @@ package physx
 
 /*
 #cgo CXXFLAGS: -std=c++17 -I${SRCDIR}/../../../third_party/physx-sdk/include -I${SRCDIR}/../../../third_party/physx-sdk/pxshared/include
-#cgo LDFLAGS: -L${SRCDIR}/../../../third_party/physx-sdk/lib/linux.x86_64/release -lPhysX_static_64 -lPhysXExtensions_static_64 -lPhysXPvdSDK_static_64 -lPhysXCommon_static_64 -lPhysXFoundation_static_64 -ldl -lpthread -lstdc++
+#cgo LDFLAGS: -L${SRCDIR}/../../../third_party/physx-sdk/lib/linux.x86_64/release -lPhysXExtensions_static_64 -lPhysX_static_64 -lPhysXPvdSDK_static_64 -lPhysXCooking_static_64 -lPhysXCommon_static_64 -lPhysXCooking_static_64 -lPhysXCommon_static_64 -lPhysXFoundation_static_64 -ldl -lpthread -lstdc++
 #include <stdlib.h>
 #include "physx_bridge.h"
 
 typedef struct px_vec3 CVec3;
 typedef struct px_quat CQuat;
 typedef struct px_raycast_hit CRaycastHit;
+typedef struct px_pvd_config CPVDConfig;
 */
 import "C"
 
@@ -20,6 +21,7 @@ import (
 	"strings"
 	"unsafe"
 
+	roomconfig "demo_server/src/roomserver/config"
 	"demo_server/src/roomserver/logic"
 )
 
@@ -56,6 +58,17 @@ func NewFactory(cfg Config) *Factory {
 	if cfg.MapCollisionPath == "" {
 		cfg.MapCollisionPath = "config/maps/mfps_arena/collision.json"
 	}
+	if strings.TrimSpace(cfg.PVDHost) == "" {
+		cfg.PVDHost = roomconfig.DefaultPhysXPVDHost
+	} else {
+		cfg.PVDHost = strings.TrimSpace(cfg.PVDHost)
+	}
+	if cfg.PVDPort <= 0 {
+		cfg.PVDPort = roomconfig.DefaultPhysXPVDPort
+	}
+	if cfg.PVDTimeoutMS <= 0 {
+		cfg.PVDTimeoutMS = roomconfig.DefaultPhysXPVDTimeoutMS
+	}
 	return &Factory{cfg: cfg}
 }
 
@@ -68,7 +81,13 @@ func (f *Factory) NewWorld(roomID string) (logic.PhysicsWorld, error) {
 	if f.cfg.CreateGroundPlane {
 		createGroundPlane = 1
 	}
-	ptr := C.px_world_create(createGroundPlane, errBuf, cErrorBufferSize)
+	pvdConfig := C.CPVDConfig{port: C.int(f.cfg.PVDPort), timeout_ms: C.uint(f.cfg.PVDTimeoutMS)}
+	if f.cfg.PVDEnabled {
+		pvdConfig.enabled = 1
+		pvdConfig.host = C.CString(f.cfg.PVDHost)
+		defer C.free(unsafe.Pointer(pvdConfig.host))
+	}
+	ptr := C.px_world_create(createGroundPlane, pvdConfig, errBuf, cErrorBufferSize)
 	if ptr == nil {
 		return nil, cError(errBuf, "create physx world")
 	}

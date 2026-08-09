@@ -1,6 +1,9 @@
 package logic
 
-import "demo_server/src/roomserver/protocol"
+import (
+	roompb "demo_server/gen/room"
+	"demo_server/src/roomserver/protocol"
+)
 
 // Vector3 三维坐标或方向
 type Vector3 struct {
@@ -27,10 +30,6 @@ type Player struct {
 	InvincibleUntilTick int64   // 无敌结束帧号
 	VerticalVelocity    float64 // 垂直速度
 	Grounded            bool    // 是否处于地面
-	SyncVersion         int     // 客户端同步协议版本
-	PredictionEnabled   bool    // 客户端是否请求预测模式
-	PhysicsHash         string  // 客户端物理数据hash
-	SyncMode            string  // 实际同步模式
 }
 
 // Session logic 层依赖的连接抽象
@@ -47,37 +46,44 @@ func (p *Player) IsInvincible(serverTick int64) bool {
 }
 
 // ToState 转换为协议快照状态
-func (p *Player) ToState() protocol.PlayerState {
+func (p *Player) ToState() *roompb.PlayerState {
 	return p.ToStateAt(0)
 }
 
 // ToStateAt 按指定服务端帧转换为协议快照状态
-func (p *Player) ToStateAt(serverTick int64) protocol.PlayerState {
+func (p *Player) ToStateAt(serverTick int64) *roompb.PlayerState {
 	if p == nil {
-		return protocol.PlayerState{}
+		return &roompb.PlayerState{}
 	}
-	return protocol.PlayerState{
-		PlayerID:            p.ID,
-		SpawnID:             p.SpawnID,
+	return &roompb.PlayerState{
+		PlayerId:            p.ID,
+		SpawnId:             p.SpawnID,
 		X:                   p.X,
 		Y:                   p.Y,
 		Z:                   p.Z,
 		Yaw:                 p.Yaw,
 		Pitch:               p.Pitch,
-		HP:                  p.HP,
-		KillCount:           p.KillCount,
-		DeathCount:          p.DeathCount,
+		Hp:                  int32(p.HP),
+		KillCount:           int32(p.KillCount),
+		DeathCount:          int32(p.DeathCount),
 		Invincible:          p.IsInvincible(serverTick),
 		InvincibleUntilTick: p.InvincibleUntilTick,
 	}
 }
 
-// ToStats 转换为玩家战绩协议数据
-func (p *Player) ToStats() protocol.PlayerStats {
+// PlayerStats 玩家战绩快照
+type PlayerStats struct {
+	PlayerID   uint64 // 玩家ID
+	KillCount  int    // 击杀数量
+	DeathCount int    // 死亡数量
+}
+
+// ToStats 转换为玩家战绩数据
+func (p *Player) ToStats() PlayerStats {
 	if p == nil {
-		return protocol.PlayerStats{}
+		return PlayerStats{}
 	}
-	return protocol.PlayerStats{
+	return PlayerStats{
 		PlayerID:   p.ID,
 		KillCount:  p.KillCount,
 		DeathCount: p.DeathCount,

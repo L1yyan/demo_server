@@ -8,11 +8,11 @@
 
 ```text
 Server.HandleMessage
-  -> handleJoinRoom / handlePlayerInput / handlePlayerInputBatch
-  -> RoomManager.JoinRoom / PushInput / PushInputBatch
+  -> handleJoinRoom / handlePlayerInput
+  -> RoomManager.JoinRoom / PushInput
   -> Room.Join / PushEvent
   -> Room.loop 从事件队列取事件
-  -> handleJoin / handleInputBatch / update
+  -> handleJoinEvent / handleInput / update
 ```
 
 对应代码：
@@ -47,9 +47,10 @@ Server.HandleMessage
 | `maxPlayersPerRoom` | `int` | 新建房间的最大玩家数 |
 | `tickRate` | `int` | 新建房间的逻辑帧率 |
 | `snapshotRate` | `int` | 新建房间的快照发送频率 |
-| `syncConfig` | `SyncConfig` | 同步、预测和纠偏配置 |
+| `syncConfig` | `SyncConfig` | 弱网输入沿用和未来排队窗口配置 |
 | `mapID` | `string` | 新建房间使用的地图 ID，会下发给客户端 |
-| `physicsHash` | `string` | 服务端物理数据 hash，用来和客户端 hash 对比 |
+| `physicsHash` | `string` | 服务端物理数据 hash，会下发给客户端 |
+| `gameDuration` | `time.Duration` | 单局对局时长 |
 | `aoi` | `AOIFilter` | AOI 过滤器，决定快照里哪些玩家对当前玩家可见 |
 | `physicsFactory` | `PhysicsWorldFactory` | 物理世界工厂，每个房间创建一个独立物理 world |
 
@@ -61,9 +62,9 @@ Server.HandleMessage
 | `NewRoomManagerWithSync` | 创建带同步参数的管理器 | 补齐 maxRooms、maxPlayers、tickRate、snapshotRate、physicsFactory 默认值 |
 | `JoinRoom` | 玩家加入房间 | 先 `getOrCreateRoom`，再向房间投递 join 事件，最后记录 `playerRooms` |
 | `LeaveRoom` | 玩家离开房间 | 删除 `playerRooms` 映射，再向房间投递 leave 事件 |
-| `PushInput` | 投递旧版单帧输入 | 查玩家所在房间，然后调用 `room.PushInput` |
-| `PushInputBatch` | 投递批量输入 | 查玩家所在房间，然后调用 `room.PushInputBatch` |
+| `PushInput` | 投递单帧输入 | 查玩家所在房间，然后调用 `room.PushInput` |
 | `RoomTick` | 查询玩家所在房间当前帧号 | 心跳响应里用来返回 `server_tick` |
+| `QueryPlayerStats` | 查询同房间玩家战绩 | 通过房间事件队列串行读取玩家状态 |
 | `Stop` | 停止所有房间 | 复制 rooms 列表后逐个 `room.Stop` |
 | `playerRoom` | 根据 playerID 找房间 | 找不到会返回 `player room not found` |
 | `getOrCreateRoom` | 获取或创建房间 | 超过 `maxRooms` 返回 `ErrRoomLimitReached`；每个房间独立创建物理 world |
@@ -75,7 +76,7 @@ Server.HandleMessage
   -> 不存在则写锁二次检查
   -> 检查房间数量上限
   -> physicsFactory.NewWorld(roomID)
-  -> NewRoomWithSync
+  -> NewRoomWithOptions
   -> room.Start
   -> 保存到 rooms
 ```
@@ -89,13 +90,14 @@ Server.HandleMessage
 它负责：
 
 - 维护房间玩家状态
-- 维护玩家输入和预测同步状态
+- 维护玩家待执行输入
 - 固定 tick 推进权威状态
-- 调用物理后端移动玩家
-- 按快照频率发送 snapshot 和 input ack
+- 调用物理后端移动玩家和 raycast
+- 按快照频率发送 snapshot
 - 处理入房、离房、输入事件
+- 处理对局开始、限时结束、开火、复活和战绩查询
 
-房间状态不暴露给多个 goroutine 直接改。外部只能通过 `Join`、`Leave`、`PushInput`、`PushInputBatch` 投递事件，真正修改发生在 `Room.loop` 所在 goroutine。
+房间状态不暴露给多个 goroutine 直接改。外部只能通过 `Join`、`Leave`、`PushInput` 投递事件，真正修改发生在 `Room.loop` 所在 goroutine。
 
 ## 6. Room 字段说明
 
@@ -105,17 +107,20 @@ Server.HandleMessage
 | `maxPlayers` | `int` | 房间最大玩家数 |
 | `tickRate` | `int` | 房间逻辑帧率，每秒 tick 次数 |
 | `snapshotRate` | `int` | 每秒发送快照次数 |
-| `syncConfig` | `SyncConfig` | 客户端预测、输入窗口、纠偏阈值等配置 |
-| `syncMode` | `string` | 房间默认同步模式，服务端启用预测时默认为 `prediction_authoritative` |
+| `syncConfig` | `SyncConfig` | 弱网输入沿用和未来排队窗口配置 |
 | `mapID` | `string` | 当前房间地图 ID，下发给客户端 |
-| `physicsHash` | `string` | 服务端物理数据 hash，用于客户端能力协商 |
+| `physicsHash` | `string` | 服务端物理数据 hash，下发给客户端 |
+| `gameStarted` | `bool` | 对局是否已开始 |
+| `gameEnded` | `bool` | 对局是否已结束 |
+| `gameStartTick` | `int64` | 对局开始帧号 |
+| `gameEndTick` | `int64` | 对局结束帧号 |
 | `currentTick` | `atomic.Int64` | 对外可读的当前房间帧号，用于心跳查询 |
 | `aoi` | `AOIFilter` | 快照可见性过滤器 |
 | `physics` | `PhysicsWorld` | 房间独立物理世界，负责碰撞、移动、射线 |
 | `events` | `chan roomEvent` | 房间事件队列，当前容量 256 |
 | `stop` | `chan struct{}` | 房间停止信号 |
 | `players` | `map[uint64]*Player` | 房间内玩家状态表 |
-| `syncStates` | `map[uint64]*playerSyncState` | 每个玩家的输入历史、预测状态和权威历史 |
+| `syncStates` | `map[uint64]*playerSyncState` | 每个玩家的待执行输入和上一帧输入 |
 | `tick` | `int64` | 房间 loop 内部使用的当前帧号 |
 | `lastSnapshotAt` | `int64` | 上一次广播快照的帧号 |
 
@@ -125,11 +130,13 @@ Server.HandleMessage
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
-| `typeID` | `roomEventType` | 事件类型：join、leave、input、inputBatch |
+| `typeID` | `roomEventType` | 事件类型：join、leave、input、statsQuery |
 | `player` | `*Player` | 入房事件携带的玩家对象 |
-| `playerID` | `uint64` | 离房和输入事件携带的玩家 ID |
-| `input` | `protocol.PlayerInput` | 旧版单帧输入 |
-| `batch` | `protocol.PlayerInputBatch` | 新版批量输入 |
+| `playerID` | `uint64` | 离房、输入和查询事件携带的玩家 ID |
+| `targetID` | `uint64` | 战绩查询目标玩家 ID |
+| `input` | `*roompb.PlayerInput` | 单帧输入 |
+| `statsResp` | `chan playerStatsQueryResult` | 战绩查询响应通道 |
+| `joinReserved` | `bool` | 是否已在 Join 阶段预占入房名额 |
 
 事件类型：
 
@@ -137,8 +144,8 @@ Server.HandleMessage
 | --- | --- |
 | `roomEventJoin` | 玩家加入 |
 | `roomEventLeave` | 玩家离开 |
-| `roomEventInput` | 旧版单帧输入 |
-| `roomEventInputBatch` | 批量输入 |
+| `roomEventInput` | 单帧输入 |
+| `roomEventPlayerStatsQuery` | 玩家战绩查询 |
 
 ## 8. Player 字段说明
 
@@ -154,22 +161,23 @@ Server.HandleMessage
 | `Yaw` | `float64` | 服务端认可的水平视角 |
 | `Pitch` | `float64` | 服务端认可的垂直视角 |
 | `HP` | `int` | 生命值，当前入房默认 100 |
+| `KillCount` | `int` | 击杀数量 |
+| `DeathCount` | `int` | 死亡数量 |
 | `SpawnID` | `string` | 占用的出生点 ID，比如 `spawn_a` 或 `spawn_b` |
 | `Session` | `Session` | logic 层依赖的连接抽象，用来发送消息 |
-| `Alive` | `bool` | 玩家是否存活，死亡玩家不参与移动更新和 AOI 可见性 |
-| `SyncVersion` | `int` | 客户端同步协议版本 |
-| `PredictionEnabled` | `bool` | 客户端是否请求预测模式 |
-| `PhysicsHash` | `string` | 客户端物理数据 hash |
-| `SyncMode` | `string` | 当前玩家实际使用的同步模式 |
+| `Alive` | `bool` | 玩家是否存活 |
+| `InvincibleUntilTick` | `int64` | 无敌结束帧号 |
+| `VerticalVelocity` | `float64` | 垂直速度 |
+| `Grounded` | `bool` | 是否处于地面 |
 
-`ToState` 会把 `Player` 转成协议层 `PlayerState`，用于 snapshot 和 correction。
+`ToState` 会把 `Player` 转成协议层 `PlayerState`，用于 snapshot 和 game over。
 
 ## 9. 入房流程
 
 网络入口是 [../service/server.go](../service/server.go) `handleJoinRoom`：
 
 ```text
-Decode JoinRoomRequest
+DecodeProto(roompb.JoinRoomReq)
   -> ParseRoomToken
   -> 校验 ServerID / RoomID / PlayerID
   -> session.SetPlayer
@@ -177,18 +185,17 @@ Decode JoinRoomRequest
   -> manager.JoinRoom
 ```
 
-房间内真正入房逻辑在 [../logic/room.go](../logic/room.go) `handleJoin`：
+房间内真正入房逻辑在 [../logic/room.go](../logic/room.go) `handleJoinEvent`：
 
 ```text
 player nil 检查
+  -> 房间是否已开始或结束检查
   -> 房间满员检查
   -> 重复入房检查
   -> nextSpawnPoint 选择出生点
   -> 写入 Player 初始状态
-  -> playerSyncMode 判断同步模式
   -> physics.AddPlayer 创建物理玩家
   -> 写入 players 和 syncStates
-  -> saveAuthoritativeState 保存初始权威状态
   -> 发送 JoinRoomAck
 ```
 
@@ -222,13 +229,7 @@ events      -> handleEvent
 ticker.C    -> update
 ```
 
-`ticker` 间隔由 `tickRate` 决定：
-
-```go
-interval := time.Second / time.Duration(r.tickRate)
-```
-
-如果 `tickRate = 20`，就是每 50ms 执行一次 `update`。
+`ticker` 间隔由 `tickRate` 决定。如果 `tickRate = 20`，就是每 50ms 执行一次 `update`。
 
 ## 12. update 做什么
 
@@ -238,9 +239,7 @@ interval := time.Second / time.Duration(r.tickRate)
 r.tick++
 currentTick.Store(r.tick)
 updatePlayers
-按 snapshotRate 判断是否到广播帧
-  -> broadcastAcks
-  -> broadcastSnapshots
+到达 snapshotRate 间隔时 broadcastSnapshots
 ```
 
 `snapshotRate` 和 `tickRate` 的关系：
@@ -269,20 +268,15 @@ intervalTicks = tickRate / snapshotRate
 
 ## 14. AOI 快照
 
-AOI 代码在 [../logic/aoi.go](../logic/aoi.go)。当前是简化 AOI：
-
-| 字段 | 默认值 | 含义 |
-| --- | --- | --- |
-| `VisibleDistance` | `80` | 水平距离超过该值不可见 |
-| `ViewAngle` | `120` | 水平视野角度，超出半角不可见 |
+AOI 代码在 [../logic/aoi.go](../logic/aoi.go)。当前是简化 AOI。
 
 `broadcastSnapshots` 对每个玩家单独生成一份快照：
 
 ```text
-states = append(states, player.ToState())
+states = append(states, player.ToStateAt(r.tick))
 visible := r.aoi.FilterVisible(player, players)
 for visiblePlayer in visible:
-    states = append(states, visiblePlayer.ToState())
+    states = append(states, visiblePlayer.ToStateAt(r.tick))
 ```
 
 也就是说快照里一定包含自己，然后才是当前玩家可见的其他玩家。

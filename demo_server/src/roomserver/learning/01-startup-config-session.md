@@ -38,29 +38,25 @@ if err := server.Start(ctx); err != nil {
 | `ListenAddr` | `:9001` | KCP 监听地址 | [../service/server.go](../service/server.go) `Start` |
 | `TokenSecret` | `room-token-secret` | room token HMAC 签名密钥 | [../service/server.go](../service/server.go) `handleJoinRoom` |
 | `MaxRooms` | `1000` | 当前进程最多创建多少个房间 | [../logic/room_manager.go](../logic/room_manager.go) `getOrCreateRoom` |
-| `MaxPlayersPerRoom` | `2` | 单个房间最大玩家数 | [../logic/room.go](../logic/room.go) `handleJoin` |
+| `MaxPlayersPerRoom` | `2` | 单个房间最大玩家数 | [../logic/room.go](../logic/room.go) `handleJoinEvent` |
 | `TickRate` | `20` | 房间逻辑帧率，每秒更新多少次 | [../logic/room.go](../logic/room.go) `loop` |
 | `SnapshotRate` | `10` | 状态快照发送频率，每秒广播多少次 | [../logic/room.go](../logic/room.go) `update` |
 | `ReadTimeout` | `10s` | 连接读超时，长时间无消息会断开 | [../service/session.go](../service/session.go) `readLoop` |
-| `WriteQueueSize` | `128` | 单连接发送队列长度 | [../service/session.go](../service/session.go) `NewSession` |
+| `WriteQueueSize` | `128` | 单连接控制消息发送队列长度 | [../service/session.go](../service/session.go) `NewSession` |
 | `MaxPayloadSize` | `64KB` | 单条业务消息最大 payload | [../protocol/message.go](../protocol/message.go) `ReadMessage` / `WriteMessage` |
 | `PhysicsBackend` | `physx` | 物理后端类型，支持 `physx` 或 `simple` | [../service/server.go](../service/server.go) `newPhysicsWorldFactory` |
 | `PlayerCapsuleRadius` | `0.35` | 玩家胶囊体半径 | [../physx/world.go](../physx/world.go) `AddPlayer` |
 | `PlayerCapsuleHeight` | `1.8` | 玩家胶囊体高度 | [../physx/world.go](../physx/world.go) `AddPlayer` |
-| `PhysicsGroundPlane` | `true` | 是否创建默认 y=0 地面 | [../physx/world.go](../physx/world.go) `NewWorld` |
-| `DefaultMapID` | `map_001` | 默认地图 ID | [../service/server.go](../service/server.go) `Start` / `newPhysicsWorldFactory` |
-| `MapCollisionPath` | `config/maps/map_001/collision.json` | 服务端地图碰撞 JSON 路径 | [../physx/world.go](../physx/world.go) `loadMapCollision` |
-| `PhysicsHash` | `sha256:...` | 服务端物理数据 hash，用于和客户端校验地图物理一致性 | [../logic/room.go](../logic/room.go) `playerSyncMode` |
-| `PredictionEnabled` | `true` | 服务端是否允许客户端预测同步 | [../service/server.go](../service/server.go) `Start` |
-| `RollbackWindowTicks` | `60` | 服务端保留多少帧历史用于回滚和纠偏 | [../logic/sync.go](../logic/sync.go) |
-| `FutureInputWindowTicks` | `8` | 允许客户端输入最多领先服务端多少帧 | [../logic/room.go](../logic/room.go) `handleInputBatch` |
-| `PredictionKeyframeInterval` | `2` | 每隔多少服务端帧校验一次客户端预测状态 | [../logic/room.go](../logic/room.go) `verifyPredictedState` |
-| `PositionTolerance` | `0.15` | 普通位置误差阈值，超过后可触发纠偏 | [../logic/room.go](../logic/room.go) `verifyPredictedState` |
-| `HardPositionTolerance` | `0.5` | 硬纠偏位置阈值，超过后忽略最小纠偏间隔 | [../logic/room.go](../logic/room.go) `verifyPredictedState` |
-| `AngleTolerance` | `2.0` | 视角误差阈值，单位是角度 | [../logic/sync.go](../logic/sync.go) `angleError` |
-| `MaxInputBatchFrames` | `8` | 单次批量输入最多携带多少帧 | [../service/server.go](../service/server.go) `handlePlayerInputBatch` |
-| `MaxInputHoldTicks` | `3` | 丢输入时，上一帧移动输入最多沿用多少帧 | [../logic/room.go](../logic/room.go) `inputForTick` |
-| `CorrectionMinIntervalTicks` | `2` | 普通纠偏最小发送间隔，避免每帧纠偏抖动 | [../logic/room.go](../logic/room.go) `verifyPredictedState` |
+| `PhysicsGroundPlane` | `true` | 是否创建 y=0 默认地面 | [../physx/world.go](../physx/world.go) `NewWorld` |
+| `PhysXPVDEnabled` | `false` | 是否启用 PhysX Visual Debugger | [../service/server.go](../service/server.go) `newPhysicsWorldFactory` |
+| `PhysXPVDHost` | `127.0.0.1` | PVD 监听地址 | [../service/server.go](../service/server.go) `newPhysicsWorldFactory` |
+| `PhysXPVDPort` | `5425` | PVD 监听端口 | [../service/server.go](../service/server.go) `newPhysicsWorldFactory` |
+| `PhysXPVDTimeoutMS` | `100` | PVD 连接超时毫秒数 | [../service/server.go](../service/server.go) `newPhysicsWorldFactory` |
+| `DefaultMapID` | `mfps_arena` | 默认地图 ID | [../service/server.go](../service/server.go) `resolveMapCollisionMetadata` |
+| `MapCollisionPath` | `config/maps/mfps_arena/collision.json` | 服务端地图碰撞 JSON 路径 | [../physx/world.go](../physx/world.go) `loadMapCollision` |
+| `PhysicsHash` | `sha256:...` | 服务端物理数据 hash，会在入房响应中下发给客户端 | [../logic/room.go](../logic/room.go) `buildJoinAck` |
+| `MaxInputHoldTicks` | `8` | 丢输入时，上一帧移动输入最多沿用多少帧 | [../logic/room.go](../logic/room.go) `inputForTick` |
+| `GameDuration` | `3m` | 单局对局时长 | [../logic/room.go](../logic/room.go) `markGameStarted` |
 
 配置文件对应字段在 [../../../config/config.yaml](../../../config/config.yaml) 的 `room_server_01` 下。
 
@@ -76,13 +72,14 @@ if err := server.Start(ctx); err != nil {
 | `sessions` | `sync.Map` | 当前连接会话表，key 是 sessionID，value 是 `*Session` |
 | `seq` | `atomic.Uint64` | 会话自增序号，用来生成唯一 sessionID |
 
-`Server.Start` 做四件事：
+`Server.Start` 做这些事：
 
 ```text
-1. 根据配置创建 PhysicsWorldFactory
-2. 组装 SyncConfig 并创建 RoomManager
-3. 监听 KCP 地址
-4. 启动 acceptLoop
+1. 校验地图碰撞元数据并绑定运行时 physics hash
+2. 根据配置创建 PhysicsWorldFactory
+3. 组装 SyncConfig 并创建 RoomManager
+4. 监听 KCP 地址
+5. 启动 acceptLoop
 ```
 
 `newPhysicsWorldFactory` 根据 `PhysicsBackend` 选择：
@@ -116,7 +113,8 @@ AcceptKCP
 | `conn` | `*kcp.UDPSession` | KCP 连接对象 |
 | `cfg` | `roomconfig.Config` | 会话需要的读超时、队列长度、payload 限制等配置 |
 | `handler` | `MessageHandler` | 业务消息处理器，当前实际对象是 `*Server` |
-| `sendCh` | `chan protocol.Message` | 服务端待发送消息队列 |
+| `sendCh` | `chan protocol.Message` | 服务端待发送控制消息队列 |
+| `snapshotCh` | `chan protocol.Message` | 服务端快照单槽队列，只保留最新快照 |
 | `closeCh` | `chan struct{}` | 会话关闭信号 |
 | `closeMu` | `sync.Once` | 保证 Close 只执行一次，避免重复 close channel |
 | `playerID` | `uint64` | 当前连接绑定的玩家 ID，入房成功前为 0 |
@@ -147,11 +145,6 @@ Session 调用 s.handler.HandleMessage(ctx, s, message)
 Go 运行时分派到 Server.HandleMessage(ctx, session, message)
 ```
 
-这里两个 `s` 变量含义不同：
-
-- `func (s *Session) readLoop` 里的 `s` 是连接会话
-- `func (s *Server) HandleMessage` 里的 `s` 是房间服务器
-
 ## 7. readLoop 和 writeLoop
 
 `Session.Start` 会启动两个 goroutine：
@@ -174,10 +167,10 @@ go s.writeLoop(ctx)
 `writeLoop` 负责：
 
 ```text
-等待 ctx / closeCh / sendCh
-  -> 从 sendCh 取出 protocol.Message
+等待 ctx / closeCh / sendCh / snapshotCh
+  -> 从队列取出 protocol.Message
   -> protocol.WriteMessage 写入 KCP 连接
   -> 写失败则关闭会话
 ```
 
-`Session.Send` 不直接写网络，而是把消息投递到 `sendCh`。如果队列满了会返回 `false`，避免业务 goroutine 被慢连接无限阻塞。
+`Session.Send` 不直接写网络，而是把消息投递到 `sendCh`。`Session.SendSnapshot` 投递到单槽 `snapshotCh`，槽满时用最新快照覆盖旧快照。这样能防止慢客户端堆积大量过期快照。

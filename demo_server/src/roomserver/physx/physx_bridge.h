@@ -30,7 +30,14 @@ typedef struct px_raycast_hit {
     double distance;
 } px_raycast_hit;
 
-px_world* px_world_create(int create_ground_plane, char* err, int err_len);
+typedef struct px_pvd_config {
+    int enabled;
+    const char* host;
+    int port;
+    unsigned int timeout_ms;
+} px_pvd_config;
+
+px_world* px_world_create(int create_ground_plane, px_pvd_config pvd_config, char* err, int err_len);
 void px_world_release(px_world* world);
 int px_world_add_static_box(px_world* world, px_vec3 position, px_quat rotation, px_vec3 size, char* err, int err_len);
 int px_world_add_player_capsule(px_world* world, uint64_t player_id, px_vec3 position, double radius, double height, char* err, int err_len);

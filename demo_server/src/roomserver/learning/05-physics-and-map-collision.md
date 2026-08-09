@@ -138,10 +138,14 @@ Simple 后端适合 logic 单元测试，不适合真实战斗服。
 | `PlayerCapsuleRadius` | `float64` | 玩家胶囊体半径 |
 | `PlayerCapsuleHeight` | `float64` | 玩家胶囊体总高度 |
 | `CreateGroundPlane` | `bool` | 是否创建默认地面 |
+| `PVDEnabled` | `bool` | 是否启用 PhysX Visual Debugger |
+| `PVDHost` | `string` | PVD 监听地址 |
+| `PVDPort` | `int` | PVD 监听端口，默认 5425 |
+| `PVDTimeoutMS` | `int` | PVD socket 连接超时毫秒数 |
 | `DefaultMapID` | `string` | 期望加载的地图 ID |
 | `MapCollisionPath` | `string` | 地图碰撞 JSON 路径 |
 
-这些字段由 [../service/server.go](../service/server.go) `newPhysicsWorldFactory` 从 roomserver Config 传入。
+这些字段由 [../service/server.go](../service/server.go) `newPhysicsWorldFactory` 从 roomserver Config 传入。PVD 默认关闭，只建议本地调试时开启。PVD 需要 checked/profile PhysX 库；release 构建会关闭 `PX_SUPPORT_PVD`。
 
 ## 10. PhysX World 字段
 
@@ -205,7 +209,7 @@ C++ ABI 在 [../physx/physx_bridge.h](../physx/physx_bridge.h) 中定义，真�
 
 | 方法 | 作用 |
 | --- | --- |
-| `px_world_create` | 创建房间级 PhysX world |
+| `px_world_create` | 创建房间级 PhysX world，并在开启时连接 PVD |
 | `px_world_release` | 释放 PhysX world |
 | `px_world_add_static_box` | 添加地图静态 box 碰撞体 |
 | `px_world_add_player_capsule` | 添加玩家胶囊体 |
@@ -220,7 +224,7 @@ C++ 层内部使用进程级 runtime 共享 `PxFoundation` 和 `PxPhysics`，每
 
 ## 14. 地图碰撞 JSON 结构
 
-默认文件是 [../../../config/maps/map_001/collision.json](../../../config/maps/map_001/collision.json)。解析代码在 [../physx/map_collision.go](../physx/map_collision.go)。
+默认文件是 [../../../config/maps/mfps_arena/collision.json](../../../config/maps/mfps_arena/collision.json)。解析代码在 [../physx/map_collision.go](../physx/map_collision.go)。
 
 `MapCollision` 字段：
 
@@ -304,7 +308,7 @@ C++ 层会把完整 size 转成 PhysX `PxBoxGeometry` 需要的半尺寸。
 projectRoot + MapCollisionPath
 ```
 
-所以默认 `config/maps/map_001/collision.json` 可以从不同工作目录启动时被找到。
+所以默认 `config/maps/mfps_arena/collision.json` 可以从不同工作目录启动时被找到。
 
 ## 19. 错误和边界
 
@@ -345,3 +349,27 @@ go test ./src/roomserver/...
 ```bash
 go test -tags physx ./src/roomserver/physx
 ```
+
+## 21. PhysX PVD 调试
+
+PVD 是 PhysX Visual Debugger，用来在本地观察 scene、actor、静态碰撞体、raycast 和 sweep 等调试数据。roomserver 默认关闭 PVD，避免服务端启动依赖外部 GUI，也避免调试传输影响性能。
+
+配置字段在 `room_server_01` 下：
+
+```yaml
+physx_pvd_enabled: false
+physx_pvd_host: "127.0.0.1"
+physx_pvd_port: 5425
+physx_pvd_timeout_ms: 100
+```
+
+开启流程：
+
+1. 先打开 NVIDIA PhysX Visual Debugger，并监听 `5425` 端口。
+2. 把 `physx_pvd_enabled` 改成 `true`。
+3. 用 `-tags physx` 启动 roomserver。
+4. 创建或加入房间，让 roomserver 创建 PhysX world。
+
+启用后，C++ 层会在进程级 PhysX runtime 创建 `PxPvd` 和 socket transport，创建 `PxPhysics` 后调用 `PxInitExtensions`，并给每个房间的 `PxScene` 打开 contacts、scene queries、constraints 传输。当前移动使用 sweep，开火使用 raycast，所以 PVD 中可以重点观察 scene query 数据。
+
+如果启用 PVD 但没有打开 PVD 工具，或当前 PhysX 库没有启用 PVD scene client，roomserver 会在创建房间时失败并提示 PVD 连接或 scene client 错误。这是为了避免误以为调试链路已经连上。

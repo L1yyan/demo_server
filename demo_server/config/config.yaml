@@ -67,17 +67,12 @@ room_server_01:
   player_capsule_radius: 0.35
   player_capsule_height: 1.8
   physics_ground_plane: true
+  physx_pvd_enabled: true
+  physx_pvd_host: "172.29.160.1"
+  physx_pvd_port: 5425
+  physx_pvd_timeout_ms: 100
   default_map_id: "mfps_arena"
   map_collision_path: "config/maps/mfps_arena/collision.json"
   physics_hash: "sha256:70921a6cda71319a1bb4e203d23cc60dd09b42854bd5a3785ff892e2ec9387d8"
-  prediction_enabled: true
-  rollback_window_ticks: 60
-  future_input_window_ticks: 8
-  prediction_keyframe_interval: 2
-  position_tolerance: 0.15
-  hard_position_tolerance: 0.5
-  angle_tolerance: 2.0
-  max_input_batch_frames: 8
   max_input_hold_ticks: 3
-  correction_min_interval_ticks: 2
   game_duration: "3m"

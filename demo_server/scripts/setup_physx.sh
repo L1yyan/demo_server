@@ -14,7 +14,7 @@ CMAKE_DIR="${TOOLS_DIR}/cmake-${CMAKE_VERSION}-linux-x86_64"
 CMAKE_BIN="${CMAKE_DIR}/bin/cmake"
 PHYSX_REPO="${PHYSX_REPO:-https://github.com/NVIDIA-Omniverse/PhysX.git}"
 PHYSX_REF="${PHYSX_REF:-main}"
-BUILD_TYPE="${BUILD_TYPE:-release}"
+BUILD_TYPE="${BUILD_TYPE:-checked}"
 PHYSX_PRESET="${PHYSX_PRESET:-linux-gcc-cpu-only}"
 
 mkdir -p "${THIRD_PARTY_DIR}" "${TOOLS_DIR}"
@@ -78,6 +78,7 @@ copy_headers() {
 # copy_libraries 整理 cgo 链接需要的静态库
 copy_libraries() {
     local src_lib_dir="${PHYSX_SRC_DIR}/physx/bin/linux.x86_64/${BUILD_TYPE}"
+    # cgo LDFLAGS 固定读取 release 目录；这里复制当前 BUILD_TYPE 产物到该目录
     local lib_dir="${PHYSX_SDK_DIR}/lib/linux.x86_64/release"
     rm -rf "${lib_dir}"
     mkdir -p "${lib_dir}"
@@ -115,9 +116,9 @@ build_physx() {
 
     echo "[physx] 构建 PhysX 核心库: ${compiler_dir}"
     if [ -f "${compiler_dir}/Makefile" ]; then
-        make -C "${compiler_dir}" -j"$(nproc)" PhysX PhysXExtensions PhysXPvdSDK PhysXCommon PhysXFoundation
+        make -C "${compiler_dir}" -j"$(nproc)" PhysX PhysXExtensions PhysXPvdSDK PhysXCommon PhysXCooking PhysXFoundation
     else
-        "${cmake_bin}" --build "${compiler_dir}" --parallel "$(nproc)" --target PhysX PhysXExtensions PhysXPvdSDK PhysXCommon PhysXFoundation
+        "${cmake_bin}" --build "${compiler_dir}" --parallel "$(nproc)" --target PhysX PhysXExtensions PhysXPvdSDK PhysXCommon PhysXCooking PhysXFoundation
     fi
 }
 

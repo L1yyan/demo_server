@@ -6,14 +6,14 @@
 
 roomserver 是战斗房间进程，当前主要负责：
 
-- 接收客户端 KCP 连接和业务消息
+- 接收客户端 KCP 连接和 protobuf 业务消息
 - 校验入房 token，把玩家放入指定房间
 - 为每个房间维护固定 tick 循环
 - 接收玩家输入，只把输入作为请求，不信任客户端坐标
 - 调用物理后端推进玩家权威坐标
 - 按快照频率广播玩家状态
-- 在预测模式下发送输入确认和权威纠偏
 - 加载地图碰撞和出生点
+- 处理服务端权威开火、死亡、复活和战绩查询
 
 一句话调用链：
 
@@ -27,7 +27,7 @@ cmd/main.go
   -> RoomManager 找到或创建 Room
   -> Room.loop 固定 tick 更新
   -> PhysicsWorld 计算权威物理结果
-  -> Session.writeLoop 写回 ack / snapshot / correction
+  -> Session.writeLoop 写回 snapshot / game event / error
 ```
 
 ## 2. 推荐阅读顺序
@@ -38,7 +38,7 @@ cmd/main.go
 
 2. [02-protocol-fields.md](02-protocol-fields.md)
 
-   再看消息协议和每个字段。目标是知道客户端和服务端到底交换了哪些 JSON payload。
+   再看消息协议和每个字段。目标是知道客户端和服务端到底交换了哪些 protobuf payload。
 
 3. [03-room-manager-and-room-loop.md](03-room-manager-and-room-loop.md)
 
@@ -46,7 +46,7 @@ cmd/main.go
 
 4. [04-authoritative-movement-and-sync.md](04-authoritative-movement-and-sync.md)
 
-   接着看服务端权威移动、输入窗口、预测状态校验、InputAck 和 StateCorrection。
+   接着看服务端权威移动、输入排帧、状态快照和为什么服务端只信输入。
 
 5. [05-physics-and-map-collision.md](05-physics-and-map-collision.md)
 
@@ -62,7 +62,7 @@ roomserver 当前主要分三层：
 | service | [../service](../service) | 网络接入层，负责 KCP 连接、读写消息、基础校验、调用 logic |
 | logic | [../logic](../logic) | 房间业务层，负责房间、玩家、tick、输入、同步、AOI、物理抽象 |
 | physx | [../physx](../physx) | 物理后端实现层，封装 cgo/PhysX 和地图碰撞加载 |
-| protocol | [../protocol](../protocol) | 房间内 KCP 业务消息结构和编解码 |
+| protocol | [../protocol](../protocol) | 房间内 KCP 业务帧和 protobuf 编解码 |
 | config | [../config](../config) | roomserver 运行配置和默认值 |
 
 依赖方向是：
@@ -103,13 +103,12 @@ Server.handleJoinRoom
 ### 4.3 同步主线
 
 ```text
-PlayerInputBatch
+PlayerInput
   -> sanitizePlayerInput
+  -> nextAvailableInputTick
   -> inputForTick
   -> simulatePlayerTick
-  -> saveAuthoritativeState
-  -> verifyPredictedState
-  -> InputAck / StateCorrection / Snapshot
+  -> Snapshot
 ```
 
 同步主线在 [../logic/movement.go](../logic/movement.go)、[../logic/sync.go](../logic/sync.go)、[../logic/room.go](../logic/room.go)。它回答的问题是：“为什么服务端只信输入，不信客户端位置”。
@@ -121,5 +120,5 @@ PlayerInputBatch
 - RoomManager 管玩家到房间的映射，并负责按需创建 Room。
 - Room 用单 goroutine 固定 tick 循环处理事件，避免房间状态被多 goroutine 直接并发修改。
 - 客户端发送输入，服务端基于输入、tickRate、物理后端计算权威状态。
-- 客户端预测状态只用于误差校验，不能覆盖服务端权威坐标。
+- 客户端不预测，客户端本地玩家和其他玩家都以服务端 Snapshot 为准。
 - PhysX 通过 `PhysicsWorld` 接口接入 logic，地图碰撞和出生点在 physx 包里加载。

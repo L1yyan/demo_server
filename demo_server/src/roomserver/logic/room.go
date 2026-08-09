@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	roompb "demo_server/gen/room"
 	"demo_server/pkg/glog"
 	"demo_server/src/roomserver/protocol"
 )
@@ -16,7 +17,6 @@ const (
 	roomEventJoin roomEventType = iota + 1
 	roomEventLeave
 	roomEventInput
-	roomEventInputBatch
 	roomEventPlayerStatsQuery
 )
 
@@ -25,17 +25,16 @@ type roomEvent struct {
 	player       *Player
 	playerID     uint64
 	targetID     uint64
-	input        protocol.PlayerInput
-	batch        protocol.PlayerInputBatch
+	input        *roompb.PlayerInput
 	statsResp    chan playerStatsQueryResult
 	joinReserved bool
 }
 
 // PlayerStatsSnapshot 玩家战绩查询快照
 type PlayerStatsSnapshot struct {
-	RoomID     string               // 房间ID
-	ServerTick int64                // 查询时房间帧号
-	Stats      protocol.PlayerStats // 玩家战绩
+	RoomID     string      // 房间ID
+	ServerTick int64       // 查询时房间帧号
+	Stats      PlayerStats // 玩家战绩
 }
 
 type playerStatsQueryResult struct {
@@ -51,14 +50,6 @@ var (
 )
 
 const (
-	inputDiagnosticAccepted          = "accepted"
-	inputDiagnosticLateRescheduled   = "late_rescheduled"
-	inputDiagnosticLateDropped       = "late_dropped"
-	inputDiagnosticFutureDropped     = "future_dropped"
-	inputDiagnosticStaleCorrection   = "stale_correction"
-	inputDiagnosticRescheduleDropped = "reschedule_dropped"
-	inputDiagnosticIntervalTicks     = 20
-	lateInputCorrectionDelayTicks    = 3
 	defaultGameDuration              = 3 * time.Minute
 	defaultPlayerHP                  = 100
 	defaultRespawnInvincibleDuration = 5 * time.Second
@@ -76,7 +67,6 @@ type Room struct {
 	tickRate          int
 	snapshotRate      int
 	syncConfig        SyncConfig
-	syncMode          string
 	mapID             string
 	physicsHash       string
 	gameDuration      time.Duration
@@ -131,17 +121,12 @@ func NewRoomWithOptions(id string, maxPlayers int, tickRate int, snapshotRate in
 	}
 	gameDurationTicks := durationToTicks(gameDuration, tickRate)
 	syncConfig = syncConfig.Normalize(tickRate)
-	syncMode := SyncModeSnapshotOnly
-	if syncConfig.PredictionEnabled {
-		syncMode = SyncModePredictionAuthoritative
-	}
 	return &Room{
 		id:                id,
 		maxPlayers:        maxPlayers,
 		tickRate:          tickRate,
 		snapshotRate:      snapshotRate,
 		syncConfig:        syncConfig,
-		syncMode:          syncMode,
 		mapID:             mapID,
 		physicsHash:       physicsHash,
 		gameDuration:      gameDuration,
@@ -228,13 +213,8 @@ func (r *Room) IsJoinClosed() bool {
 }
 
 // PushInput 投递玩家输入事件
-func (r *Room) PushInput(playerID uint64, input protocol.PlayerInput) bool {
+func (r *Room) PushInput(playerID uint64, input *roompb.PlayerInput) bool {
 	return r.pushEvent(roomEvent{typeID: roomEventInput, playerID: playerID, input: input})
-}
-
-// PushInputBatch 投递玩家批量输入事件
-func (r *Room) PushInputBatch(playerID uint64, batch protocol.PlayerInputBatch) bool {
-	return r.pushEvent(roomEvent{typeID: roomEventInputBatch, playerID: playerID, batch: batch})
 }
 
 // pushEvent 写入房间事件队列
@@ -290,8 +270,6 @@ func (r *Room) handleEvent(ctx context.Context, event roomEvent) {
 		r.handleLeave(ctx, event.playerID)
 	case roomEventInput:
 		r.handleInput(ctx, event.playerID, event.input)
-	case roomEventInputBatch:
-		r.handleInputBatch(ctx, event.playerID, event.batch)
 	case roomEventPlayerStatsQuery:
 		r.handlePlayerStatsQuery(event)
 	}
@@ -319,24 +297,24 @@ func (r *Room) handleJoinEvent(ctx context.Context, event roomEvent) {
 		r.reconcileJoinSlots()
 	}()
 	if r.gameStarted || r.gameEnded {
-		message, _ := protocol.NewJSONMessage(protocol.MsgJoinRoomAck, r.buildJoinAck(false, nil, "game already started"))
+		message, _ := protocol.NewProtoMessage(protocol.MsgJoinRoomAck, r.buildJoinAck(false, nil, "game already started"))
 		player.Session.Send(message)
 		return
 	}
 	if len(r.players) >= r.maxPlayers {
-		message, _ := protocol.NewJSONMessage(protocol.MsgJoinRoomAck, r.buildJoinAck(false, nil, "room is full"))
+		message, _ := protocol.NewProtoMessage(protocol.MsgJoinRoomAck, r.buildJoinAck(false, nil, "room is full"))
 		player.Session.Send(message)
 		return
 	}
 	if _, exists := r.players[player.ID]; exists {
-		message, _ := protocol.NewJSONMessage(protocol.MsgJoinRoomAck, r.buildJoinAck(false, nil, "player already joined"))
+		message, _ := protocol.NewProtoMessage(protocol.MsgJoinRoomAck, r.buildJoinAck(false, nil, "player already joined"))
 		player.Session.Send(message)
 		return
 	}
 
 	spawnPoint, ok := r.nextSpawnPoint()
 	if !ok {
-		message, _ := protocol.NewJSONMessage(protocol.MsgJoinRoomAck, r.buildJoinAck(false, nil, "spawn point not available"))
+		message, _ := protocol.NewProtoMessage(protocol.MsgJoinRoomAck, r.buildJoinAck(false, nil, "spawn point not available"))
 		player.Session.Send(message)
 		return
 	}
@@ -355,23 +333,21 @@ func (r *Room) handleJoinEvent(ctx context.Context, event roomEvent) {
 	player.InvincibleUntilTick = 0
 	player.VerticalVelocity = 0
 	player.Grounded = true
-	player.SyncMode = r.playerSyncMode(player)
 	if err := r.physics.AddPlayer(player.ID, spawnPoint.Position); err != nil {
-		message, _ := protocol.NewJSONMessage(protocol.MsgJoinRoomAck, r.buildJoinAck(false, nil, "physics add player failed"))
+		message, _ := protocol.NewProtoMessage(protocol.MsgJoinRoomAck, r.buildJoinAck(false, nil, "physics add player failed"))
 		player.Session.Send(message)
 		glog.Warn(ctx, "add physics player failed", glog.String("room_id", r.id), glog.Uint64("player_id", player.ID), glog.Err(err))
 		return
 	}
 	r.players[player.ID] = player
 	r.syncStates[player.ID] = newPlayerSyncState()
-	r.saveAuthoritativeState(player.ID, player)
 	joined = true
 
 	shouldBroadcastGameStart := false
 	if len(r.players) >= r.maxPlayers {
 		shouldBroadcastGameStart = r.markGameStarted(ctx)
 	}
-	message, _ := protocol.NewJSONMessage(protocol.MsgJoinRoomAck, r.buildJoinAck(true, player, "ok"))
+	message, _ := protocol.NewProtoMessage(protocol.MsgJoinRoomAck, r.buildJoinAck(true, player, "ok"))
 	player.Session.Send(message)
 	glog.Info(ctx, "player joined room", glog.String("room_id", r.id), glog.Uint64("player_id", player.ID))
 	if shouldBroadcastGameStart {
@@ -393,17 +369,6 @@ func (r *Room) reconcileJoinSlots() {
 		return
 	}
 	r.joinSlots.Store(int64(len(r.players)))
-}
-
-// playerSyncMode 判断玩家实际使用的同步模式
-func (r *Room) playerSyncMode(player *Player) string {
-	if player == nil || !r.syncConfig.PredictionEnabled || !player.PredictionEnabled || player.SyncVersion <= 0 {
-		return SyncModeSnapshotOnly
-	}
-	if r.physicsHash != "" && player.PhysicsHash != r.physicsHash {
-		return SyncModeSnapshotOnly
-	}
-	return SyncModePredictionAuthoritative
 }
 
 // gameDurationSeconds 返回对局时长秒数
@@ -430,36 +395,24 @@ func (r *Room) markGameStarted(ctx context.Context) bool {
 }
 
 // buildJoinAck 构造加入房间响应
-func (r *Room) buildJoinAck(ok bool, player *Player, content string) protocol.JoinRoomAck {
-	tick := r.Tick()
-	ack := protocol.JoinRoomAck{
-		OK:                         ok,
-		RoomID:                     r.id,
-		Content:                    content,
-		Tick:                       tick,
-		TickRate:                   r.tickRate,
-		SnapshotRate:               r.snapshotRate,
-		ServerTime:                 time.Now().UnixMilli(),
-		SyncMode:                   r.syncMode,
-		MapID:                      r.mapID,
-		PhysicsHash:                r.physicsHash,
-		RollbackWindowTicks:        r.syncConfig.RollbackWindowTicks,
-		FutureInputWindowTicks:     r.syncConfig.FutureInputWindowTicks,
-		PredictionKeyframeInterval: r.syncConfig.PredictionKeyframeInterval,
-		PositionTolerance:          r.syncConfig.PositionTolerance,
-		HardPositionTolerance:      r.syncConfig.HardPositionTolerance,
-		AngleTolerance:             r.syncConfig.AngleTolerance,
-		GameDurationSeconds:        r.gameDurationSeconds(),
-		GameStarted:                r.gameStarted,
-		GameStartTick:              r.gameStartTick,
-		GameEndTick:                r.gameEndTick,
+func (r *Room) buildJoinAck(status bool, player *Player, content string) *roompb.JoinRoomResp {
+	ack := &roompb.JoinRoomResp{
+		Status:              status,
+		RoomId:              r.id,
+		Content:             content,
+		Tick:                r.Tick(),
+		TickRate:            int32(r.tickRate),
+		SnapshotRate:        int32(r.snapshotRate),
+		ServerTime:          time.Now().UnixMilli(),
+		MapId:               r.mapID,
+		PhysicsHash:         r.physicsHash,
+		GameDurationSeconds: r.gameDurationSeconds(),
+		GameStarted:         r.gameStarted,
+		GameStartTick:       r.gameStartTick,
+		GameEndTick:         r.gameEndTick,
 	}
 	if player != nil {
-		if player.SyncMode == "" {
-			player.SyncMode = r.playerSyncMode(player)
-		}
-		ack.SyncMode = player.SyncMode
-		ack.SpawnID = player.SpawnID
+		ack.SpawnId = player.SpawnID
 		ack.X = player.X
 		ack.Y = player.Y
 		ack.Z = player.Z
@@ -495,8 +448,8 @@ func (r *Room) nextSpawnPoint() (SpawnPoint, bool) {
 
 // broadcastGameStart 广播对局开始通知
 func (r *Room) broadcastGameStart(ctx context.Context) {
-	message, err := protocol.NewJSONMessage(protocol.MsgGameStart, protocol.GameStart{
-		RoomID:          r.id,
+	message, err := protocol.NewProtoMessage(protocol.MsgGameStart, &roompb.GameStart{
+		RoomId:          r.id,
 		ServerTick:      r.tick,
 		StartTick:       r.gameStartTick,
 		EndTick:         r.gameEndTick,
@@ -537,8 +490,8 @@ func (r *Room) finishGame(ctx context.Context) {
 
 // broadcastGameOver 广播对局结束通知
 func (r *Room) broadcastGameOver(ctx context.Context) {
-	message, err := protocol.NewJSONMessage(protocol.MsgGameOver, protocol.GameOver{
-		RoomID:     r.id,
+	message, err := protocol.NewProtoMessage(protocol.MsgGameOver, &roompb.GameOver{
+		RoomId:     r.id,
 		ServerTick: r.tick,
 		StartTick:  r.gameStartTick,
 		EndTick:    r.gameEndTick,
@@ -568,8 +521,8 @@ func (r *Room) playerIDs() []uint64 {
 }
 
 // playerStates 返回当前房间玩家状态列表
-func (r *Room) playerStates() []protocol.PlayerState {
-	states := make([]protocol.PlayerState, 0, len(r.players))
+func (r *Room) playerStates() []*roompb.PlayerState {
+	states := make([]*roompb.PlayerState, 0, len(r.players))
 	for _, player := range r.players {
 		if player == nil {
 			continue
@@ -646,116 +599,28 @@ func (r *Room) lookupPlayerStats(requesterID uint64, targetID uint64) (PlayerSta
 	return PlayerStatsSnapshot{RoomID: r.id, ServerTick: r.tick, Stats: target.ToStats()}, nil
 }
 
-// handleInput 处理旧单帧玩家输入
-func (r *Room) handleInput(ctx context.Context, playerID uint64, input protocol.PlayerInput) {
-	if r.gameEnded {
-		return
-	}
-	syncState := r.ensureSyncState(playerID)
-	targetTick := input.ClientTick
-	if targetTick <= syncState.lastAppliedTick || targetTick < r.tick-r.syncConfig.RollbackWindowTicks || targetTick > r.tick+r.syncConfig.FutureInputWindowTicks {
-		targetTick = r.tick + 1
-	}
-	if _, exists := syncState.inputs[targetTick]; exists {
-		targetTick++
-	}
-	frame := protocol.PlayerInputFrame{
-		ClientTick: targetTick,
-		MoveX:      input.MoveX,
-		MoveZ:      input.MoveZ,
-		Yaw:        input.Yaw,
-		Pitch:      input.Pitch,
-		Fire:       input.Fire,
-		Jump:       input.Jump,
-	}
-	r.handleInputBatch(ctx, playerID, protocol.PlayerInputBatch{BaseClientTick: targetTick, Frames: []protocol.PlayerInputFrame{frame}})
-}
-
-// handleInputBatch 处理批量玩家输入
-func (r *Room) handleInputBatch(ctx context.Context, playerID uint64, batch protocol.PlayerInputBatch) {
-	if r.gameEnded {
+// handleInput 处理单帧玩家输入
+func (r *Room) handleInput(ctx context.Context, playerID uint64, input *roompb.PlayerInput) {
+	if r.gameEnded || input == nil {
 		return
 	}
 	player, exists := r.players[playerID]
 	if !exists || player == nil || !player.Alive {
 		return
 	}
+	sanitized, ok := sanitizePlayerInput(input)
+	if !ok {
+		return
+	}
+
+	// 按服务端收到顺序写入后续 tick，避免客户端时间改写权威节奏
 	syncState := r.ensureSyncState(playerID)
-	if len(batch.Frames) == 0 {
-		return
-	}
-	if len(batch.Frames) > r.syncConfig.MaxInputBatchFrames {
-		glog.Warn(ctx, "reject oversized input batch", glog.String("room_id", r.id), glog.Uint64("player_id", playerID), glog.Int("frames", len(batch.Frames)))
-		return
-	}
-
-	acceptedInBatch := false
-	var latestLateInput authoritativeInput
-	hasLateInput := false
-	for _, frame := range batch.Frames {
-		inputTick := frame.ClientTick
-		if inputTick == 0 {
-			inputTick = batch.BaseClientTick
-		}
-		if inputTick < r.tick-r.syncConfig.RollbackWindowTicks {
-			r.logInputDiagnostic(ctx, syncState, inputDiagnosticStaleCorrection, playerID, inputTick, 0)
-			r.sendCurrentCorrection(player, syncState, correctionReasonStaleInput)
-			continue
-		}
-		if inputTick > r.tick+r.syncConfig.FutureInputWindowTicks {
-			r.logInputDiagnostic(ctx, syncState, inputDiagnosticFutureDropped, playerID, inputTick, 0)
-			continue
-		}
-
-		frame.ClientTick = inputTick
-		sanitized, ok := sanitizePlayerInput(inputFrameToPlayerInput(frame))
-		if !ok {
-			continue
-		}
-		if inputTick <= syncState.lastAppliedTick {
-			if r.canRescheduleLateInput(inputTick, syncState) && (!hasLateInput || inputTick > latestLateInput.ClientTick) {
-				latestLateInput = sanitized
-				hasLateInput = true
-			} else {
-				r.logInputDiagnostic(ctx, syncState, inputDiagnosticLateDropped, playerID, inputTick, 0)
-			}
-			continue
-		}
-		if _, exists := syncState.inputs[inputTick]; exists {
-			continue
-		}
-
-		r.acceptInput(syncState, inputTick, inputTick, sanitized)
-		r.logInputDiagnostic(ctx, syncState, inputDiagnosticAccepted, playerID, inputTick, inputTick)
-		acceptedInBatch = true
-		if frame.PredictedState != nil && predictedStateFinite(*frame.PredictedState) {
-			syncState.predictedStates[inputTick] = *frame.PredictedState
-		}
-	}
-	if acceptedInBatch || !hasLateInput {
-		return
-	}
 	targetTick, ok := r.nextAvailableInputTick(syncState)
 	if !ok {
-		r.logInputDiagnostic(ctx, syncState, inputDiagnosticRescheduleDropped, playerID, latestLateInput.ClientTick, 0)
+		glog.Warn(ctx, "drop queued input by full input window", glog.String("room_id", r.id), glog.Uint64("player_id", playerID), glog.Int64("server_tick", r.tick))
 		return
 	}
-	originalLateTick := latestLateInput.ClientTick
-	latestLateInput.ClientTick = targetTick
-	r.acceptInput(syncState, targetTick, originalLateTick, latestLateInput)
-	syncState.lateRescheduledTicks[targetTick] = true
-	r.logInputDiagnostic(ctx, syncState, inputDiagnosticLateRescheduled, playerID, originalLateTick, targetTick)
-}
-
-// canRescheduleLateInput 判断轻微迟到输入是否还能排到后续 tick 执行
-func (r *Room) canRescheduleLateInput(inputTick int64, syncState *playerSyncState) bool {
-	if syncState == nil || inputTick > syncState.lastAppliedTick {
-		return false
-	}
-	if inputTick <= syncState.lastAcceptedInputTick {
-		return false
-	}
-	return inputTick >= r.tick-r.syncConfig.RollbackWindowTicks
+	r.acceptInput(syncState, targetTick, sanitized)
 }
 
 // nextAvailableInputTick 获取下一帧可写入的输入 tick
@@ -764,10 +629,14 @@ func (r *Room) nextAvailableInputTick(syncState *playerSyncState) (int64, bool) 
 		return 0, false
 	}
 	targetTick := r.tick + 1
-	if syncState.lastAppliedTick+1 > targetTick {
-		targetTick = syncState.lastAppliedTick + 1
+	if syncState.lastQueuedInputTick >= targetTick {
+		targetTick = syncState.lastQueuedInputTick + 1
 	}
-	maxTick := r.tick + r.syncConfig.FutureInputWindowTicks
+	maxQueuedTicks := r.syncConfig.MaxInputHoldTicks + 1
+	if maxQueuedTicks <= 0 {
+		maxQueuedTicks = 1
+	}
+	maxTick := r.tick + maxQueuedTicks
 	for targetTick <= maxTick {
 		if _, exists := syncState.inputs[targetTick]; !exists {
 			return targetTick, true
@@ -777,39 +646,13 @@ func (r *Room) nextAvailableInputTick(syncState *playerSyncState) (int64, bool) 
 	return 0, false
 }
 
-// acceptInput 写入服务端待执行输入并推进客户端输入确认 tick
-func (r *Room) acceptInput(syncState *playerSyncState, executeTick int64, acceptedClientTick int64, input authoritativeInput) {
+// acceptInput 写入服务端待执行输入
+func (r *Room) acceptInput(syncState *playerSyncState, executeTick int64, input authoritativeInput) {
 	input.ClientTick = executeTick
 	syncState.inputs[executeTick] = input
-	if acceptedClientTick > syncState.lastAcceptedInputTick {
-		syncState.lastAcceptedInputTick = acceptedClientTick
+	if executeTick > syncState.lastQueuedInputTick {
+		syncState.lastQueuedInputTick = executeTick
 	}
-}
-
-// logInputDiagnostic 按原因节流输出输入处理诊断日志
-func (r *Room) logInputDiagnostic(ctx context.Context, syncState *playerSyncState, reason string, playerID uint64, inputTick int64, targetTick int64) {
-	if syncState == nil {
-		return
-	}
-	if syncState.lastInputDiagnosticTicks == nil {
-		syncState.lastInputDiagnosticTicks = make(map[string]int64)
-	}
-	lastLoggedTick := syncState.lastInputDiagnosticTicks[reason]
-	if lastLoggedTick > 0 && r.tick-lastLoggedTick < inputDiagnosticIntervalTicks {
-		return
-	}
-	syncState.lastInputDiagnosticTicks[reason] = r.tick
-
-	glog.Info(ctx, "room input diagnostic",
-		glog.String("room_id", r.id),
-		glog.Uint64("player_id", playerID),
-		glog.String("reason", reason),
-		glog.Int64("server_tick", r.tick),
-		glog.Int64("input_tick", inputTick),
-		glog.Int64("target_tick", targetTick),
-		glog.Int64("last_applied_tick", syncState.lastAppliedTick),
-		glog.Int64("last_accepted_input_tick", syncState.lastAcceptedInputTick),
-	)
 }
 
 // update 更新房间状态并按频率广播快照，返回 true 表示房间已结束
@@ -835,7 +678,6 @@ func (r *Room) update(ctx context.Context) bool {
 		return false
 	}
 	r.lastSnapshotAt = r.tick
-	r.broadcastAcks(ctx)
 	r.broadcastSnapshots(ctx)
 	return false
 }
@@ -853,9 +695,6 @@ func (r *Room) updatePlayers(ctx context.Context) {
 			r.simulatePlayerTick(ctx, player, inputState, hasExactInput)
 		}
 		syncState.lastAppliedTick = r.tick
-		r.saveAuthoritativeState(playerID, player)
-		r.sendLateInputRescheduleCorrection(ctx, player, syncState, r.tick)
-		r.verifyPredictedState(ctx, player, syncState, r.tick)
 		r.cleanupSyncState(syncState)
 	}
 }
@@ -899,7 +738,6 @@ func (r *Room) simulatePlayerTick(ctx context.Context, player *Player, input aut
 		result, err := r.physics.MovePlayer(moveReq)
 		if err != nil {
 			glog.Warn(ctx, "move physics player failed", glog.String("room_id", r.id), glog.Uint64("player_id", player.ID), glog.Err(err))
-			r.sendCurrentCorrection(player, r.ensureSyncState(player.ID), "physics_error")
 		} else {
 			player.X = result.Position.X
 			player.Y = result.Position.Y
@@ -954,7 +792,6 @@ func (r *Room) applyFireDamage(ctx context.Context, shooter *Player, target *Pla
 	}
 	glog.Info(ctx, "player fire hit", glog.String("room_id", r.id), glog.Uint64("shooter_player_id", shooter.ID), glog.Uint64("target_player_id", target.ID), glog.Int("target_hp", target.HP), glog.Float64("distance", hit.Distance))
 	if target.HP > 0 {
-		r.saveAuthoritativeState(target.ID, target)
 		return
 	}
 
@@ -965,11 +802,8 @@ func (r *Room) applyFireDamage(ctx context.Context, shooter *Player, target *Pla
 	target.DeathCount++
 	target.Alive = false
 	if !r.respawnPlayerAtSpawn(ctx, target) {
-		r.saveAuthoritativeState(target.ID, target)
 		return
 	}
-	r.saveAuthoritativeState(target.ID, target)
-	r.sendCurrentCorrection(target, r.ensureSyncState(target.ID), correctionReasonRespawn)
 }
 
 // respawnPlayerAtSpawn 将死亡玩家复活到原出生点
@@ -1031,143 +865,10 @@ func (r *Room) discardFutureSyncState(playerID uint64) {
 			delete(syncState.inputs, tick)
 		}
 	}
-	for tick := range syncState.predictedStates {
-		if tick > r.tick {
-			delete(syncState.predictedStates, tick)
-		}
-	}
-	for tick := range syncState.lateRescheduledTicks {
-		if tick > r.tick {
-			delete(syncState.lateRescheduledTicks, tick)
-		}
-	}
 	syncState.hasLastInput = false
 	syncState.lastInput = authoritativeInput{}
 	syncState.lastInputTick = 0
-}
-
-// saveAuthoritativeState 保存玩家当前权威状态
-func (r *Room) saveAuthoritativeState(playerID uint64, player *Player) {
-	syncState := r.ensureSyncState(playerID)
-	syncState.authoritativeHistory[r.tick] = frameStateFromPlayer(r.tick, player)
-}
-
-// sendLateInputRescheduleCorrection 对迟到重排后的权威状态做低频重同步
-func (r *Room) sendLateInputRescheduleCorrection(ctx context.Context, player *Player, syncState *playerSyncState, tick int64) {
-	if syncState == nil || player == nil || !syncState.lateRescheduledTicks[tick] {
-		return
-	}
-	if syncState.lastAcceptedInputTick+lateInputCorrectionDelayTicks >= tick {
-		return
-	}
-	if tick-syncState.lastCorrectionTick < r.syncConfig.CorrectionMinIntervalTicks {
-		return
-	}
-	authoritative, exists := syncState.authoritativeHistory[tick]
-	if !exists {
-		return
-	}
-	if err := r.sendCorrection(player, syncState, authoritative, correctionReasonLateInputReschedule, 0, 0); err != nil {
-		glog.Warn(ctx, "send late input reschedule correction failed", glog.String("room_id", r.id), glog.Uint64("player_id", player.ID), glog.Err(err))
-	}
-}
-
-// verifyPredictedState 校验客户端预测状态并在超阈值时纠偏
-func (r *Room) verifyPredictedState(ctx context.Context, player *Player, syncState *playerSyncState, tick int64) {
-	if !r.syncConfig.PredictionEnabled || syncState == nil || player == nil || player.SyncMode != SyncModePredictionAuthoritative {
-		return
-	}
-	predicted, exists := syncState.predictedStates[tick]
-	if !exists {
-		return
-	}
-	if r.syncConfig.PredictionKeyframeInterval > 1 && tick%r.syncConfig.PredictionKeyframeInterval != 0 {
-		return
-	}
-	authoritative, exists := syncState.authoritativeHistory[tick]
-	if !exists {
-		return
-	}
-	posError := positionError(predicted, authoritative)
-	angError := angleError(predicted, authoritative)
-	syncState.lastVerifiedTick = tick
-	if posError <= r.syncConfig.PositionTolerance && angError <= r.syncConfig.AngleTolerance {
-		return
-	}
-
-	reason := correctionReasonPositionError
-	if posError <= r.syncConfig.PositionTolerance && angError > r.syncConfig.AngleTolerance {
-		reason = correctionReasonAngleError
-	}
-	force := posError > r.syncConfig.HardPositionTolerance
-	if !force && tick-syncState.lastCorrectionTick < r.syncConfig.CorrectionMinIntervalTicks {
-		return
-	}
-	if err := r.sendCorrection(player, syncState, authoritative, reason, posError, angError); err != nil {
-		glog.Warn(ctx, "send state correction failed", glog.String("room_id", r.id), glog.Uint64("player_id", player.ID), glog.Err(err))
-	}
-}
-
-// sendCurrentCorrection 发送玩家当前权威状态纠偏
-func (r *Room) sendCurrentCorrection(player *Player, syncState *playerSyncState, reason string) {
-	if player == nil || syncState == nil || player.SyncMode != SyncModePredictionAuthoritative {
-		return
-	}
-	state := frameStateFromPlayer(r.tick, player)
-	if err := r.sendCorrection(player, syncState, state, reason, 0, 0); err != nil {
-		return
-	}
-}
-
-// sendCorrection 向玩家发送权威纠偏消息
-func (r *Room) sendCorrection(player *Player, syncState *playerSyncState, state playerFrameState, reason string, posError float64, angError float64) error {
-	message, err := protocol.NewJSONMessage(protocol.MsgStateCorrection, protocol.StateCorrection{
-		PlayerID:              player.ID,
-		RollbackTick:          state.Tick,
-		ServerTick:            r.tick,
-		LastAcceptedInputTick: syncState.lastAcceptedInputTick,
-		State:                 state.toPlayerState(),
-		Reason:                reason,
-		PositionError:         posError,
-		AngleError:            angError,
-	})
-	if err != nil {
-		return err
-	}
-	if player.Session.Send(message) {
-		syncState.lastCorrectionTick = r.tick
-		glog.Info(context.Background(), "state correction sent",
-			glog.String("room_id", player.RoomID),
-			glog.Uint64("player_id", player.ID),
-			glog.String("reason", reason),
-			glog.Int64("rollback_tick", state.Tick),
-			glog.Int64("server_tick", r.tick),
-			glog.Int64("last_accepted_input_tick", syncState.lastAcceptedInputTick),
-			glog.Float64("position_error", posError),
-			glog.Float64("angle_error", angError),
-		)
-	}
-	return nil
-}
-
-// broadcastAcks 按快照频率向玩家发送输入确认
-func (r *Room) broadcastAcks(ctx context.Context) {
-	for playerID, player := range r.players {
-		if player == nil || player.SyncMode != SyncModePredictionAuthoritative {
-			continue
-		}
-		syncState := r.ensureSyncState(playerID)
-		message, err := protocol.NewJSONMessage(protocol.MsgInputAck, protocol.InputAck{
-			ServerTick:            r.tick,
-			LastAcceptedInputTick: syncState.lastAcceptedInputTick,
-			LastVerifiedInputTick: syncState.lastVerifiedTick,
-		})
-		if err != nil {
-			glog.Error(ctx, "build input ack failed", glog.String("room_id", r.id), glog.Err(err))
-			continue
-		}
-		player.Session.Send(message)
-	}
+	syncState.lastQueuedInputTick = r.tick
 }
 
 // broadcastSnapshots 按 AOI 向玩家广播状态快照
@@ -1178,12 +879,12 @@ func (r *Room) broadcastSnapshots(ctx context.Context) {
 	}
 	for _, player := range players {
 		visible := r.aoi.FilterVisible(player, players)
-		states := make([]protocol.PlayerState, 0, len(visible)+1)
+		states := make([]*roompb.PlayerState, 0, len(visible)+1)
 		states = append(states, player.ToStateAt(r.tick))
 		for _, visiblePlayer := range visible {
 			states = append(states, visiblePlayer.ToStateAt(r.tick))
 		}
-		message, err := protocol.NewJSONMessage(protocol.MsgSnapshot, protocol.Snapshot{ServerTick: r.tick, Players: states})
+		message, err := protocol.NewProtoMessage(protocol.MsgSnapshot, &roompb.Snapshot{ServerTick: r.tick, Players: states})
 		if err != nil {
 			glog.Error(ctx, "build snapshot failed", glog.String("room_id", r.id), glog.Err(err))
 			continue
@@ -1198,10 +899,10 @@ func (r *Room) broadcastSnapshots(ctx context.Context) {
 }
 
 // playerStateIDs 提取快照里的玩家ID用于诊断日志
-func playerStateIDs(states []protocol.PlayerState) []uint64 {
+func playerStateIDs(states []*roompb.PlayerState) []uint64 {
 	ids := make([]uint64, 0, len(states))
 	for _, state := range states {
-		ids = append(ids, state.PlayerID)
+		ids = append(ids, state.PlayerId)
 	}
 	return ids
 }
@@ -1216,30 +917,14 @@ func (r *Room) ensureSyncState(playerID uint64) *playerSyncState {
 	return syncState
 }
 
-// cleanupSyncState 清理超出回滚窗口的同步历史
+// cleanupSyncState 清理已经执行过的输入状态
 func (r *Room) cleanupSyncState(syncState *playerSyncState) {
 	if syncState == nil {
 		return
 	}
-	minTick := r.tick - r.syncConfig.RollbackWindowTicks
 	for tick := range syncState.inputs {
-		if tick < minTick || tick <= syncState.lastAppliedTick {
+		if tick <= syncState.lastAppliedTick {
 			delete(syncState.inputs, tick)
-		}
-	}
-	for tick := range syncState.predictedStates {
-		if tick < minTick || tick <= syncState.lastVerifiedTick-r.syncConfig.RollbackWindowTicks {
-			delete(syncState.predictedStates, tick)
-		}
-	}
-	for tick := range syncState.lateRescheduledTicks {
-		if tick < minTick || tick <= syncState.lastAppliedTick {
-			delete(syncState.lateRescheduledTicks, tick)
-		}
-	}
-	for tick := range syncState.authoritativeHistory {
-		if tick < minTick {
-			delete(syncState.authoritativeHistory, tick)
 		}
 	}
 }

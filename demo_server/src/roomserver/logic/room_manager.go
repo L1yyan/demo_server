@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"demo_server/src/roomserver/protocol"
+	roompb "demo_server/gen/room"
 )
 
 var (
@@ -121,24 +121,12 @@ func (m *RoomManager) LeaveRoom(playerID uint64) {
 }
 
 // PushInput 投递玩家输入
-func (m *RoomManager) PushInput(playerID uint64, input protocol.PlayerInput) error {
+func (m *RoomManager) PushInput(playerID uint64, input *roompb.PlayerInput) error {
 	room, err := m.playerRoom(playerID)
 	if err != nil {
 		return err
 	}
 	if ok := room.PushInput(playerID, input); !ok {
-		return ErrRoomEventQueueFull
-	}
-	return nil
-}
-
-// PushInputBatch 投递玩家批量输入
-func (m *RoomManager) PushInputBatch(playerID uint64, batch protocol.PlayerInputBatch) error {
-	room, err := m.playerRoom(playerID)
-	if err != nil {
-		return err
-	}
-	if ok := room.PushInputBatch(playerID, batch); !ok {
 		return ErrRoomEventQueueFull
 	}
 	return nil

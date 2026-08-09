@@ -35,7 +35,7 @@ func TestSendSnapshotDoesNotUseControlQueue(t *testing.T) {
 	cfg := roomconfig.DefaultConfig()
 	cfg.WriteQueueSize = 1
 	session := NewSession("session-test", nil, cfg, nil)
-	control := protocol.Message{Type: protocol.MsgInputAck, Payload: []byte("ack")}
+	control := protocol.Message{Type: protocol.MsgHeartbeatAck, Payload: []byte("ack")}
 	snapshot := protocol.Message{Type: protocol.MsgSnapshot, Payload: []byte("snapshot")}
 
 	if !session.Send(control) {

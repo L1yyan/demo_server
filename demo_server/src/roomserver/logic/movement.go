@@ -3,7 +3,7 @@ package logic
 import (
 	"math"
 
-	"demo_server/src/roomserver/protocol"
+	roompb "demo_server/gen/room"
 )
 
 const (
@@ -24,8 +24,8 @@ type authoritativeInput struct {
 }
 
 // sanitizePlayerInput 校验并归一化客户端输入
-func sanitizePlayerInput(input protocol.PlayerInput) (authoritativeInput, bool) {
-	if !isFinite(input.MoveX) || !isFinite(input.MoveZ) || !isFinite(input.Yaw) || !isFinite(input.Pitch) {
+func sanitizePlayerInput(input *roompb.PlayerInput) (authoritativeInput, bool) {
+	if input == nil || !isFinite(input.MoveX) || !isFinite(input.MoveZ) || !isFinite(input.Yaw) || !isFinite(input.Pitch) {
 		return authoritativeInput{}, false
 	}
 

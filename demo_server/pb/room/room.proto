@@ -17,9 +17,8 @@ service RoomService {
 // JoinRoomReq 加入房间请求
 message JoinRoomReq {
   string token = 1; // 入房令牌
-  int32 sync_version = 2; // 同步协议版本
-  bool prediction_enabled = 3; // 是否请求预测模式
-  string physics_hash = 4; // 客户端物理数据hash
+  reserved 2, 3, 4;
+  reserved "sync_version", "prediction_enabled", "physics_hash";
 }
 
 // JoinRoomResp 加入房间响应
@@ -37,15 +36,10 @@ message JoinRoomResp {
   int32 tick_rate = 11; // 逻辑帧率
   int32 snapshot_rate = 12; // 快照频率
   int64 server_time = 13; // 服务端时间戳
-  string sync_mode = 14; // 实际同步模式
+  reserved 14, 17, 18, 19, 20, 21, 22;
+  reserved "sync_mode", "rollback_window_ticks", "future_input_window_ticks", "prediction_keyframe_interval", "position_tolerance", "hard_position_tolerance", "angle_tolerance";
   string map_id = 15; // 地图ID
   string physics_hash = 16; // 服务端物理数据hash
-  int64 rollback_window_ticks = 17; // 回滚窗口帧数
-  int64 future_input_window_ticks = 18; // 未来输入窗口帧数
-  int64 prediction_keyframe_interval = 19; // 预测关键帧间隔
-  double position_tolerance = 20; // 位置误差阈值
-  double hard_position_tolerance = 21; // 硬纠偏位置阈值
-  double angle_tolerance = 22; // 角度误差阈值
   int64 game_duration_seconds = 23; // 对局时长秒数
   bool game_started = 24; // 是否已开始对局
   int64 game_start_tick = 25; // 对局开始帧号
@@ -70,35 +64,6 @@ message PlayerInput {
   bool jump = 7; // 是否跳跃
 }
 
-// PredictedPlayerState 客户端预测状态
-message PredictedPlayerState {
-  double x = 1; // X坐标
-  double y = 2; // Y坐标
-  double z = 3; // Z坐标
-  double yaw = 4; // 水平视角
-  double pitch = 5; // 垂直视角
-  uint32 state_hash = 6; // 状态hash
-}
-
-// PlayerInputFrame 单帧输入
-message PlayerInputFrame {
-  int64 client_tick = 1; // 客户端帧号
-  double move_x = 2; // 左右移动输入
-  double move_z = 3; // 前后移动输入
-  double yaw = 4; // 水平视角
-  double pitch = 5; // 垂直视角
-  bool fire = 6; // 是否开火
-  PredictedPlayerState predicted_state = 7; // 客户端预测状态
-  bool jump = 8; // 是否跳跃
-}
-
-// PlayerInputBatch 批量输入
-message PlayerInputBatch {
-  int64 base_client_tick = 1; // 起始客户端帧号
-  repeated PlayerInputFrame frames = 2; // 输入帧列表
-  int64 last_received_server_tick = 3; // 已收到服务端帧号
-}
-
 // PlayerState 玩家状态
 message PlayerState {
   uint64 player_id = 1; // 玩家ID
@@ -119,25 +84,6 @@ message PlayerState {
 message Snapshot {
   int64 server_tick = 1; // 服务端帧号
   repeated PlayerState players = 2; // 可见玩家
-}
-
-// InputAck 输入处理确认
-message InputAck {
-  int64 server_tick = 1; // 服务端当前帧号
-  int64 last_accepted_input_tick = 2; // 最后接受输入帧号
-  int64 last_verified_input_tick = 3; // 最后校验输入帧号
-}
-
-// StateCorrection 权威状态纠偏
-message StateCorrection {
-  uint64 player_id = 1; // 玩家ID
-  int64 rollback_tick = 2; // 回滚帧号
-  int64 server_tick = 3; // 服务端当前帧号
-  int64 last_accepted_input_tick = 4; // 最后接受输入帧号
-  PlayerState state = 5; // 权威状态
-  string reason = 6; // 纠偏原因
-  double position_error = 7; // 位置误差
-  double angle_error = 8; // 角度误差
 }
 
 // GameStart 对局开始通知

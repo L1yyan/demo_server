@@ -2,9 +2,9 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 
+	roompb "demo_server/gen/room"
 	roomconfig "demo_server/src/roomserver/config"
 	"demo_server/src/roomserver/logic"
 	"demo_server/src/roomserver/protocol"
@@ -21,8 +21,8 @@ func TestHandlePlayerStatsQueryRequiresJoinedSession(t *testing.T) {
 	if message.Type != protocol.MsgError {
 		t.Fatalf("expected error message, got %d", message.Type)
 	}
-	var response protocol.ErrorResponse
-	if err := json.Unmarshal(message.Payload, &response); err != nil {
+	var response roompb.ErrorResp
+	if err := protocol.DecodeProto(message, &response); err != nil {
 		t.Fatalf("decode error response: %v", err)
 	}
 	if response.Code != "not_joined" {
@@ -45,11 +45,11 @@ func TestHandlePlayerStatsQueryReturnsStats(t *testing.T) {
 	server.HandleMessage(context.Background(), session, protocol.Message{Type: protocol.MsgPlayerStatsQuery})
 
 	message := receiveControlMessageOfType(t, session, protocol.MsgPlayerStatsResp)
-	var response protocol.PlayerStatsResp
-	if err := json.Unmarshal(message.Payload, &response); err != nil {
+	var response roompb.PlayerStatsResp
+	if err := protocol.DecodeProto(message, &response); err != nil {
 		t.Fatalf("decode stats response: %v", err)
 	}
-	if !response.OK || response.RoomID != "room-test" || response.Stats.PlayerID != 1 {
+	if !response.Status || response.RoomId != "room-test" || response.Stats.PlayerId != 1 {
 		t.Fatalf("unexpected stats response: %+v", response)
 	}
 }
