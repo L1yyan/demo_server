@@ -25,3 +25,19 @@ func TestRoomManagerCleansRoomAfterGameOver(t *testing.T) {
 		t.Fatal("expected player B room index cleaned after game over")
 	}
 }
+
+// TestRoomManagerLeaveRoomIgnoresStaleRoomID 验证旧连接关闭不会误删新房间索引
+func TestRoomManagerLeaveRoomIgnoresStaleRoomID(t *testing.T) {
+	manager := NewRoomManagerWithOptions(nil, 10, 2, 20, 10, SyncConfig{}, "", "", 50*time.Millisecond, nil, NewSimplePhysicsWorldFactory())
+	oldRoom := NewRoomWithOptions("room-old", 2, 20, 10, nil, NewSimplePhysicsWorld(), SyncConfig{}, "", "", 50*time.Millisecond, manager.finishRoom)
+	newRoom := NewRoomWithOptions("room-new", 2, 20, 10, nil, NewSimplePhysicsWorld(), SyncConfig{}, "", "", 50*time.Millisecond, manager.finishRoom)
+	manager.rooms[oldRoom.ID()] = oldRoom
+	manager.rooms[newRoom.ID()] = newRoom
+	manager.playerRooms[1] = newRoom.ID()
+
+	manager.LeaveRoom(1, oldRoom.ID())
+
+	if got := manager.playerRooms[1]; got != newRoom.ID() {
+		t.Fatalf("expected stale leave to keep player in %q, got %q", newRoom.ID(), got)
+	}
+}

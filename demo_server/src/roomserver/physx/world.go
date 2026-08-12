@@ -34,14 +34,14 @@ func BackendAvailable() bool {
 
 // Factory 创建 PhysX 物理世界
 type Factory struct {
-	cfg Config // PhysX 后端配置
+	cfg Config // PhysX 后端配置，创建每个房间 world 时使用
 }
 
 // World PhysX 物理世界
 type World struct {
-	ptr         *C.px_world
-	cfg         Config
-	spawnPoints []logic.SpawnPoint
+	ptr         *C.px_world        // C++ 侧 px_world 不透明指针，所有物理操作最终都走它
+	cfg         Config             // 当前 world 使用的 PhysX 配置
+	spawnPoints []logic.SpawnPoint // 从地图碰撞文件加载出的出生点列表
 }
 
 // NewFactory 创建 PhysX 物理世界工厂
@@ -74,9 +74,11 @@ func NewFactory(cfg Config) *Factory {
 
 // NewWorld 创建房间级 PhysX 物理世界
 func (f *Factory) NewWorld(roomID string) (logic.PhysicsWorld, error) {
+	// 创建 C 层错误缓冲区，用于承接 PhysX 初始化失败时的错误字符串
 	errBuf := newCErrorBuffer()
 	defer C.free(unsafe.Pointer(errBuf))
 
+	// 将 Go 配置转换为 C ABI 参数，交给 C++ 侧创建真正的 PhysX world
 	createGroundPlane := C.int(0)
 	if f.cfg.CreateGroundPlane {
 		createGroundPlane = 1
@@ -91,6 +93,8 @@ func (f *Factory) NewWorld(roomID string) (logic.PhysicsWorld, error) {
 	if ptr == nil {
 		return nil, cError(errBuf, "create physx world")
 	}
+
+	// 保存 C++ world 指针后，再加载地图静态碰撞和出生点
 	world := &World{ptr: ptr, cfg: f.cfg}
 	if err := world.loadMapCollision(); err != nil {
 		_ = world.Close()
@@ -104,6 +108,8 @@ func (w *World) loadMapCollision() error {
 	if w.ptr == nil {
 		return logic.ErrPhysicsWorldClosed
 	}
+
+	// 读取并校验 Unity 导出的地图碰撞文件，确保地图ID、单位和碰撞数据可用
 	collision, err := loadMapCollision(w.cfg.MapCollisionPath, w.cfg.DefaultMapID)
 	if err != nil {
 		return fmt.Errorf("load physx map collision: %w", err)
@@ -114,11 +120,18 @@ func (w *World) loadMapCollision() error {
 		if collider.IsTrigger {
 			continue
 		}
-		if strings.ToLower(strings.TrimSpace(collider.Shape)) != mapColliderShapeBox {
+		// 根据碰撞体形状分发到 C++，由 PhysX scene 持有真正的静态 actor
+		switch strings.ToLower(strings.TrimSpace(collider.Shape)) {
+		case mapColliderShapeBox:
+			if err := w.addStaticBox(collider); err != nil {
+				return fmt.Errorf("add static collider %s: %w", collider.ID, err)
+			}
+		case mapColliderShapeMesh:
+			if err := w.addStaticMesh(collider); err != nil {
+				return fmt.Errorf("add static collider %s: %w", collider.ID, err)
+			}
+		default:
 			return fmt.Errorf("%w: %s", ErrUnsupportedMapColliderShape, collider.Shape)
-		}
-		if err := w.addStaticBox(collider); err != nil {
-			return fmt.Errorf("add static collider %s: %w", collider.ID, err)
 		}
 	}
 	return nil
@@ -126,12 +139,39 @@ func (w *World) loadMapCollision() error {
 
 // addStaticBox 添加地图静态 box 碰撞体
 func (w *World) addStaticBox(collider MapCollider) error {
+	// Box 碰撞体只需要把中心点、旋转和完整尺寸传给 C++，由 PhysX 创建静态刚体
 	errBuf := newCErrorBuffer()
 	defer C.free(unsafe.Pointer(errBuf))
 
 	code := C.px_world_add_static_box(w.ptr, toCVec3(toLogicVector3(collider.Position)), toCQuat(toQuaternion(collider.Rotation)), toCVec3(toLogicVector3(collider.Size)), errBuf, cErrorBufferSize)
 	if code != 0 {
 		return cError(errBuf, "add physx static box")
+	}
+	return nil
+}
+
+// addStaticMesh 添加地图静态 mesh 碰撞体
+func (w *World) addStaticMesh(collider MapCollider) error {
+	// mesh 碰撞体需要先把扁平数组整理成 C 侧期望的顶点和三角形索引数组
+	errBuf := newCErrorBuffer()
+	defer C.free(unsafe.Pointer(errBuf))
+
+	if len(collider.Vertices) == 0 || len(collider.Triangles) == 0 {
+		return errors.New("mesh data is empty")
+	}
+
+	vertices := make([]C.double, len(collider.Vertices))
+	for i, value := range collider.Vertices {
+		vertices[i] = C.double(value)
+	}
+	triangles := make([]C.int, len(collider.Triangles))
+	for i, value := range collider.Triangles {
+		triangles[i] = C.int(value)
+	}
+
+	code := C.px_world_add_static_mesh(w.ptr, &vertices[0], C.int(len(vertices)/mapMeshVertexElementSize), &triangles[0], C.int(len(triangles)/mapMeshTriangleElementSize), errBuf, cErrorBufferSize)
+	if code != 0 {
+		return cError(errBuf, "add physx static mesh")
 	}
 	return nil
 }
@@ -148,6 +188,7 @@ func (w *World) AddPlayer(playerID uint64, position logic.Vector3) error {
 	if w.ptr == nil {
 		return logic.ErrPhysicsWorldClosed
 	}
+	// Go 侧只传业务坐标和玩家ID，具体胶囊体创建由 C++ 侧完成
 	errBuf := newCErrorBuffer()
 	defer C.free(unsafe.Pointer(errBuf))
 
@@ -163,6 +204,7 @@ func (w *World) RemovePlayer(playerID uint64) error {
 	if w.ptr == nil {
 		return logic.ErrPhysicsWorldClosed
 	}
+	// 玩家离开房间时同步移除 C++ 侧 actor，避免 scene 中残留胶囊体
 	errBuf := newCErrorBuffer()
 	defer C.free(unsafe.Pointer(errBuf))
 
@@ -178,6 +220,7 @@ func (w *World) MovePlayer(req logic.MovePlayerRequest) (logic.MovePlayerResult,
 	if w.ptr == nil {
 		return logic.MovePlayerResult{}, logic.ErrPhysicsWorldClosed
 	}
+	// 把 Go 的移动请求转为 C ABI 参数，由 C++ 侧做 sweep、重力和落地检测
 	errBuf := newCErrorBuffer()
 	defer C.free(unsafe.Pointer(errBuf))
 
@@ -209,6 +252,7 @@ func (w *World) GetPlayerPosition(playerID uint64) (logic.Vector3, error) {
 	if w.ptr == nil {
 		return logic.Vector3{}, logic.ErrPhysicsWorldClosed
 	}
+	// 从 C++ 侧读取玩家当前位置，再转换回 Go 业务坐标
 	errBuf := newCErrorBuffer()
 	defer C.free(unsafe.Pointer(errBuf))
 
@@ -225,6 +269,7 @@ func (w *World) SetPlayerPosition(playerID uint64, position logic.Vector3) error
 	if w.ptr == nil {
 		return logic.ErrPhysicsWorldClosed
 	}
+	// 强制修正玩家位置时，先把 Go 坐标转成 C 侧期望的业务坐标格式
 	errBuf := newCErrorBuffer()
 	defer C.free(unsafe.Pointer(errBuf))
 
@@ -240,6 +285,7 @@ func (w *World) Raycast(req logic.RaycastRequest) (logic.RaycastHit, error) {
 	if w.ptr == nil {
 		return logic.RaycastHit{}, logic.ErrPhysicsWorldClosed
 	}
+	// 单条射线直接交给 C++ 侧的 PhysX scene query 处理
 	errBuf := newCErrorBuffer()
 	defer C.free(unsafe.Pointer(errBuf))
 
@@ -260,6 +306,7 @@ func (w *World) BatchRaycast(reqs []logic.RaycastRequest) ([]logic.RaycastHit, e
 		return nil, nil
 	}
 
+	// 批量请求先整理成 C 数组，减少 Go/C++ 之间的多次跨语言调用
 	origins := make([]C.CVec3, len(reqs))
 	directions := make([]C.CVec3, len(reqs))
 	maxDistances := make([]C.double, len(reqs))
@@ -294,6 +341,7 @@ func (w *World) Close() error {
 	if w.ptr == nil {
 		return nil
 	}
+	// 先释放 C++ 侧 scene、actor 和共享 runtime 引用，再把 Go 侧指针置空
 	C.px_world_release(w.ptr)
 	w.ptr = nil
 	return nil

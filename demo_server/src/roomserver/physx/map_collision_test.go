@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -28,6 +29,29 @@ func TestLoadMapCollision(t *testing.T) {
 	}
 	if len(collision.Colliders) != 1 {
 		t.Fatalf("expected 1 collider, got %d", len(collision.Colliders))
+	}
+}
+
+// TestLoadMapCollisionMesh 验证 mesh 碰撞体会被加载和校验
+func TestLoadMapCollisionMesh(t *testing.T) {
+	path := writeTestMapCollision(t, "map_test", `
+    {
+      "id": "mesh_wall_test",
+      "shape": "mesh",
+      "position": [0, 0, 0],
+      "rotation": [0, 0, 0, 1],
+      "vertices": [0, 0, 0, 1, 0, 0, 0, 1, 0],
+      "triangles": [0, 1, 2],
+      "is_trigger": false
+    }`)
+
+	collision, err := loadMapCollision(path, "map_test")
+	if err != nil {
+		t.Fatalf("load mesh map collision: %v", err)
+	}
+	collider := collision.Colliders[0]
+	if collider.Shape != mapColliderShapeMesh || len(collider.Vertices) != 9 || len(collider.Triangles) != 3 {
+		t.Fatalf("unexpected mesh collider: %+v", collider)
 	}
 }
 
@@ -74,6 +98,25 @@ func TestLoadMapCollisionRejectUnsupportedShape(t *testing.T) {
 	_, err := loadMapCollision(path, "map_test")
 	if !errors.Is(err, ErrUnsupportedMapColliderShape) {
 		t.Fatalf("expected unsupported shape error, got %v", err)
+	}
+}
+
+// TestLoadMapCollisionRejectInvalidMesh 验证非法 mesh 会在加载阶段被拒绝
+func TestLoadMapCollisionRejectInvalidMesh(t *testing.T) {
+	path := writeTestMapCollision(t, "map_test", `
+    {
+      "id": "bad_mesh_test",
+      "shape": "mesh",
+      "position": [0, 0, 0],
+      "rotation": [0, 0, 0, 1],
+      "vertices": [0, 0, 0, 1, 0, 0, 0, 1, 0],
+      "triangles": [0, 1, 3],
+      "is_trigger": false
+    }`)
+
+	_, err := loadMapCollision(path, "map_test")
+	if err == nil || !strings.Contains(err.Error(), "index out of range") {
+		t.Fatalf("expected invalid mesh index error, got %v", err)
 	}
 }
 

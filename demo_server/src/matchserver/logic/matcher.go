@@ -2,6 +2,7 @@ package logic
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"strings"
@@ -170,7 +171,11 @@ func (m *Matcher) allocateLocked(mode string) (*serverState, *roomState, uint64,
 	for _, server := range m.servers {
 		room := server.findAvailableRoom(mode)
 		if room == nil {
-			room = server.createRoom(mode)
+			createdRoom, err := server.createRoom(mode)
+			if err != nil {
+				return nil, nil, 0, err
+			}
+			room = createdRoom
 		}
 		if room == nil {
 			continue
@@ -192,6 +197,21 @@ func (m *Matcher) purgeExpiredReservations(now time.Time) {
 			delete(reservation.room.reservations, key)
 		}
 	}
+	m.pruneEmptyRooms()
+}
+
+// pruneEmptyRooms 清理无占位房间，避免后续匹配复用旧roomID
+func (m *Matcher) pruneEmptyRooms() {
+	for _, server := range m.servers {
+		rooms := server.rooms[:0]
+		for _, room := range server.rooms {
+			if room == nil || room.reservationCount() == 0 {
+				continue
+			}
+			rooms = append(rooms, room)
+		}
+		server.rooms = rooms
+	}
 }
 
 // findAvailableRoom 查找同匹配模式或命名房间下的未满房间
@@ -205,13 +225,26 @@ func (s *serverState) findAvailableRoom(mode string) *roomState {
 }
 
 // createRoom 创建新房间
-func (s *serverState) createRoom(mode string) *roomState {
+func (s *serverState) createRoom(mode string) (*roomState, error) {
 	if s.maxRooms > 0 && len(s.rooms) >= s.maxRooms {
-		return nil
+		return nil, nil
 	}
-	room := &roomState{id: fmt.Sprintf("%s-%d", s.id, len(s.rooms)+1), mode: mode, reservations: make(map[reservationKey]*reservationState)}
+	roomID, err := newRoomID(s.id)
+	if err != nil {
+		return nil, err
+	}
+	room := &roomState{id: roomID, mode: mode, reservations: make(map[reservationKey]*reservationState)}
 	s.rooms = append(s.rooms, room)
-	return room
+	return room, nil
+}
+
+// newRoomID 生成全局唯一房间ID
+func newRoomID(serverID string) (string, error) {
+	var randomBytes [16]byte
+	if _, err := rand.Read(randomBytes[:]); err != nil {
+		return "", fmt.Errorf("generate room id: %w", err)
+	}
+	return fmt.Sprintf("%s-%x", serverID, randomBytes), nil
 }
 
 // reservationCount 返回房间当前有效占位数量

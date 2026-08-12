@@ -15,30 +15,31 @@
 using namespace physx;
 
 struct player_actor {
-    PxRigidDynamic* actor;
-    double radius;
-    double height;
+    PxRigidDynamic* actor; // 玩家在 PhysX scene 中的 kinematic 胶囊体 actor
+    double radius;         // 玩家胶囊体半径，移动 sweep 时用于重建碰撞形状
+    double height;         // 玩家胶囊体总高度，用于业务脚底坐标和 PhysX 中心坐标互转
 };
 
 struct px_runtime {
-    PxDefaultAllocator allocator;
-    PxDefaultErrorCallback error_callback;
-    PxFoundation* foundation;
-    PxPhysics* physics;
-    PxPvd* pvd;
-    PxPvdTransport* pvd_transport;
-    bool pvd_enabled;
-    bool extensions_initialized;
-    int ref_count;
+    PxDefaultAllocator allocator;          // PhysX 默认内存分配器，创建 foundation 时使用
+    PxDefaultErrorCallback error_callback; // PhysX 默认错误回调，用于接收 SDK 内部告警和错误
+    PxFoundation* foundation;              // PhysX 基础对象，所有 PhysX 系统的根依赖
+    PxPhysics* physics;                    // PhysX 主对象，用于创建 scene、material、mesh 等资源
+    PxPvd* pvd;                            // PhysX Visual Debugger 对象，启用后发送调试数据
+    PxPvdTransport* pvd_transport;         // PVD socket 传输对象，负责连接外部 PVD 工具
+    bool pvd_enabled;                      // 当前全局 runtime 是否已启用 PVD
+    bool extensions_initialized;           // PhysX extensions 是否已初始化，释放时需要成对关闭
+    int ref_count;                         // 被多少个 px_world 引用，归零后释放全局 runtime
 };
 
 struct px_world {
-    px_runtime* runtime;
-    PxDefaultCpuDispatcher* dispatcher;
-    PxScene* scene;
-    PxMaterial* material;
-    std::unordered_map<uint64_t, player_actor> players;
-    std::vector<PxRigidStatic*> static_actors;
+    px_runtime* runtime;                                // 共享 PhysX runtime，多个房间 world 复用同一个实例
+    PxDefaultCpuDispatcher* dispatcher;                 // 当前 scene 的 CPU 任务调度器
+    PxScene* scene;                                     // 房间级物理场景，玩家、地图碰撞和查询都在这里执行
+    PxMaterial* material;                               // 默认物理材质，创建地图碰撞体和玩家胶囊体时复用
+    std::unordered_map<uint64_t, player_actor> players; // 玩家ID到 PhysX actor 的映射
+    std::vector<PxRigidStatic*> static_actors;          // 地图静态碰撞 actor 列表，world 释放时统一回收
+    std::vector<PxTriangleMesh*> triangle_meshes;       // cooked triangle mesh 资源列表，mesh actor 释放后也要回收
 };
 
 namespace {
@@ -88,11 +89,30 @@ bool valid_box_size(px_vec3 value) {
     return valid_vec3(value) && value.x > 0 && value.y > 0 && value.z > 0;
 }
 
+bool valid_mesh_input(const double* vertices, int vertex_count, const int* triangles, int triangle_count) {
+    if (vertices == nullptr || triangles == nullptr || vertex_count < 3 || triangle_count < 1) {
+        return false;
+    }
+    for (int i = 0; i < vertex_count * 3; ++i) {
+        if (!std::isfinite(vertices[i])) {
+            return false;
+        }
+    }
+    for (int i = 0; i < triangle_count * 3; ++i) {
+        if (triangles[i] < 0 || triangles[i] >= vertex_count) {
+            return false;
+        }
+    }
+    return true;
+}
+
 class IgnoreActorFilter : public PxQueryFilterCallback {
 public:
+    // ignored_actor 表示本次查询需要排除的 actor，常用于移动和开火时忽略玩家自己
     explicit IgnoreActorFilter(const PxRigidActor* ignored_actor) : ignored_actor_(ignored_actor) {}
 
     PxQueryHitType::Enum preFilter(const PxFilterData&, const PxShape*, const PxRigidActor* actor, PxHitFlags&) override {
+        // 查询命中待忽略 actor 时丢弃该命中，其他 actor 都作为阻挡处理
         if (ignored_actor_ != nullptr && actor == ignored_actor_) {
             return PxQueryHitType::eNONE;
         }
@@ -104,20 +124,24 @@ public:
     }
 
 private:
-    const PxRigidActor* ignored_actor_;
+    const PxRigidActor* ignored_actor_; // 本次 scene query 要忽略的 actor 指针
 };
 
 PxReal capsule_half_height(double radius, double height) {
+    // PhysX capsule 的 halfHeight 是中间圆柱段的一半，不是胶囊体总高度的一半
     return static_cast<PxReal>(std::max(0.01, (height - radius * 2.0) * 0.5));
 }
 
 PxTransform player_transform(px_vec3 position, double radius, double height) {
+    // 业务层记录玩家脚底位置，PhysX actor 使用胶囊体中心位置
     PxReal center_y = static_cast<PxReal>(position.y + height * 0.5);
+    // PhysX capsule 默认沿 X 轴，这里旋转到服务端使用的 Y 轴竖直方向
     return PxTransform(PxVec3(static_cast<PxReal>(position.x), center_y, static_cast<PxReal>(position.z)), PxQuat(PxHalfPi, PxVec3(0, 0, 1)));
 }
 
 px_vec3 actor_player_position(PxRigidDynamic* actor, double height) {
     PxTransform pose = actor->getGlobalPose();
+    // 返回给 Go 侧时还原为业务脚底坐标
     return px_vec3{static_cast<double>(pose.p.x), static_cast<double>(pose.p.y) - height * 0.5, static_cast<double>(pose.p.z)};
 }
 
@@ -197,6 +221,7 @@ bool configure_scene_pvd(PxScene* scene, char* err, int err_len) {
 px_runtime* acquire_runtime(px_pvd_config pvd_config, char* err, int err_len) {
     std::lock_guard<std::mutex> lock(g_runtime_mutex);
     if (g_runtime != nullptr) {
+        // 全局 runtime 已创建时直接复用，避免每个房间重复初始化 PhysX SDK
         if (pvd_config.enabled != 0 && !g_runtime->pvd_enabled) {
             set_error(err, err_len, "pvd must be enabled before physx runtime is created");
             return nullptr;
@@ -206,6 +231,7 @@ px_runtime* acquire_runtime(px_pvd_config pvd_config, char* err, int err_len) {
     }
 
     px_runtime* runtime = new px_runtime{};
+    // Foundation 是 PhysX 根对象，后续 Physics、PVD、extensions 都依赖它
     runtime->foundation = PxCreateFoundation(PX_PHYSICS_VERSION, runtime->allocator, runtime->error_callback);
     if (runtime->foundation == nullptr) {
         set_error(err, err_len, "create foundation failed");
@@ -213,12 +239,14 @@ px_runtime* acquire_runtime(px_pvd_config pvd_config, char* err, int err_len) {
         return nullptr;
     }
 
+    // PVD 必须在 PxPhysics 创建前挂到 runtime 上，后续 scene 才能发送调试数据
     if (!init_pvd(runtime, pvd_config, err, err_len)) {
         cleanup_runtime(runtime);
         delete runtime;
         return nullptr;
     }
 
+    // PxPhysics 是创建 scene、material、mesh 的主入口
     runtime->physics = PxCreatePhysics(PX_PHYSICS_VERSION, *runtime->foundation, PxTolerancesScale(), true, runtime->pvd);
     if (runtime->physics == nullptr) {
         set_error(err, err_len, "create physics failed");
@@ -226,6 +254,7 @@ px_runtime* acquire_runtime(px_pvd_config pvd_config, char* err, int err_len) {
         delete runtime;
         return nullptr;
     }
+    // extensions 初始化成功后必须在 runtime 清理时调用 PxCloseExtensions
     if (!PxInitExtensions(*runtime->physics, runtime->pvd)) {
         set_error(err, err_len, "init physx extensions failed");
         cleanup_runtime(runtime);
@@ -339,6 +368,12 @@ void px_world_release(px_world* world) {
         }
     }
     world->static_actors.clear();
+    for (auto* mesh : world->triangle_meshes) {
+        if (mesh != nullptr) {
+            mesh->release();
+        }
+    }
+    world->triangle_meshes.clear();
     if (world->material != nullptr) {
         world->material->release();
     }
@@ -384,6 +419,69 @@ int px_world_add_static_box(px_world* world, px_vec3 position, px_quat rotation,
     }
     world->scene->addActor(*actor);
     world->static_actors.push_back(actor);
+    return 0;
+}
+
+int px_world_add_static_mesh(px_world* world, const double* vertices, int vertex_count, const int* triangles, int triangle_count, char* err, int err_len) {
+    PxPhysics* physics = world_physics(world);
+    if (physics == nullptr || world->scene == nullptr || world->material == nullptr) {
+        set_error(err, err_len, "world is nil");
+        return 1;
+    }
+    if (!valid_mesh_input(vertices, vertex_count, triangles, triangle_count)) {
+        set_error(err, err_len, "invalid static mesh");
+        return 1;
+    }
+
+    std::vector<PxVec3> px_vertices;
+    px_vertices.reserve(static_cast<size_t>(vertex_count));
+    for (int i = 0; i < vertex_count; ++i) {
+        int offset = i * 3;
+        px_vertices.emplace_back(static_cast<PxReal>(vertices[offset]), static_cast<PxReal>(vertices[offset + 1]), static_cast<PxReal>(vertices[offset + 2]));
+    }
+
+    std::vector<PxU32> px_triangles;
+    px_triangles.reserve(static_cast<size_t>(triangle_count * 3));
+    for (int i = 0; i < triangle_count * 3; ++i) {
+        px_triangles.push_back(static_cast<PxU32>(triangles[i]));
+    }
+
+    PxTriangleMeshDesc mesh_desc;
+    mesh_desc.points.count = static_cast<PxU32>(vertex_count);
+    mesh_desc.points.stride = sizeof(PxVec3);
+    mesh_desc.points.data = px_vertices.data();
+    mesh_desc.triangles.count = static_cast<PxU32>(triangle_count);
+    mesh_desc.triangles.stride = sizeof(PxU32) * 3;
+    mesh_desc.triangles.data = px_triangles.data();
+    if (!mesh_desc.isValid()) {
+        set_error(err, err_len, "invalid static mesh desc");
+        return 1;
+    }
+
+    PxCookingParams cooking_params(physics->getTolerancesScale());
+    PxTriangleMeshCookingResult::Enum cooking_result;
+    PxTriangleMesh* triangle_mesh = PxCreateTriangleMesh(cooking_params, mesh_desc, physics->getPhysicsInsertionCallback(), &cooking_result);
+    if (triangle_mesh == nullptr) {
+        set_error(err, err_len, "create triangle mesh failed");
+        return 1;
+    }
+
+    PxTriangleMeshGeometry geometry(triangle_mesh, PxMeshScale(), PxMeshGeometryFlag::eDOUBLE_SIDED);
+    if (!geometry.isValid()) {
+        triangle_mesh->release();
+        set_error(err, err_len, "invalid triangle mesh geometry");
+        return 1;
+    }
+
+    PxRigidStatic* actor = PxCreateStatic(*physics, PxTransform(PxIdentity), geometry, *world->material);
+    if (actor == nullptr) {
+        triangle_mesh->release();
+        set_error(err, err_len, "create static mesh actor failed");
+        return 1;
+    }
+    world->scene->addActor(*actor);
+    world->static_actors.push_back(actor);
+    world->triangle_meshes.push_back(triangle_mesh);
     return 0;
 }
 
@@ -490,6 +588,7 @@ int px_world_move_player(px_world* world, uint64_t player_id, px_vec3 direction,
             }
         }
         next.p += move_dir * travel;
+        
     }
 
     PxSweepBuffer ground_hit;
@@ -572,6 +671,7 @@ int px_world_raycast(px_world* world, px_vec3 origin, px_vec3 direction, double 
     IgnoreActorFilter filter_callback(ignored_actor);
     bool has_hit = world->scene->raycast(to_px_vec3(origin), dir, static_cast<PxReal>(max_distance), hit, PxHitFlag::eDEFAULT, filter_data, &filter_callback);
     *out_hit = px_raycast_hit{};
+    
     if (!has_hit || !hit.hasBlock) {
         return 0;
     }

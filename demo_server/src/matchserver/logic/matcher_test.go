@@ -3,6 +3,7 @@ package logic
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -166,13 +167,31 @@ func TestMatcherExpiredReservationReleasesRoomSlot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("allocate third player after expiration: %v", err)
 	}
-	if third.RoomID != first.RoomID {
-		t.Fatalf("expected expired slots to be reused in %q, got %q", first.RoomID, third.RoomID)
+	if third.RoomID == first.RoomID {
+		t.Fatalf("expected expired room to be replaced with a new room id, got %q", third.RoomID)
 	}
 	if len(matcher.reservations) != 1 {
 		t.Fatalf("expected only one active reservation after purge, got %d", len(matcher.reservations))
 	}
 	if got := matcher.servers[0].rooms[0].reservationCount(); got != 1 {
 		t.Fatalf("expected one room reservation after purge, got %d", got)
+	}
+}
+
+// TestNewRoomIDUsesRandomSuffix 验证新房间ID带随机后缀，避免复用旧房间ID
+func TestNewRoomIDUsesRandomSuffix(t *testing.T) {
+	first, err := newRoomID("room-01")
+	if err != nil {
+		t.Fatalf("new first room id: %v", err)
+	}
+	second, err := newRoomID("room-01")
+	if err != nil {
+		t.Fatalf("new second room id: %v", err)
+	}
+	if first == second {
+		t.Fatalf("expected different room ids, got %q", first)
+	}
+	if !strings.HasPrefix(first, "room-01-") || !strings.HasPrefix(second, "room-01-") {
+		t.Fatalf("expected room ids to keep server prefix, got %q and %q", first, second)
 	}
 }

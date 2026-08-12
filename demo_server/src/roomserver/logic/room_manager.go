@@ -106,13 +106,17 @@ func (m *RoomManager) JoinRoom(roomID string, player *Player) error {
 }
 
 // LeaveRoom 离开房间
-func (m *RoomManager) LeaveRoom(playerID uint64) {
+func (m *RoomManager) LeaveRoom(playerID uint64, roomID string) {
 	m.mu.Lock()
-	roomID, exists := m.playerRooms[playerID]
+	currentRoomID, exists := m.playerRooms[playerID]
+	if roomID != "" && exists && currentRoomID != roomID {
+		m.mu.Unlock()
+		return
+	}
 	if exists {
 		delete(m.playerRooms, playerID)
 	}
-	room := m.rooms[roomID]
+	room := m.rooms[currentRoomID]
 	m.mu.Unlock()
 
 	if exists && room != nil {

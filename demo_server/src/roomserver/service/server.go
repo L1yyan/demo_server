@@ -128,7 +128,7 @@ func (s *Server) HandleSessionClosed(ctx context.Context, session *Session) {
 	}
 	s.sessions.Delete(session.ID())
 	if session.PlayerID() != 0 && s.manager != nil {
-		s.manager.LeaveRoom(session.PlayerID())
+		s.manager.LeaveRoom(session.PlayerID(), session.RoomID())
 	}
 	glog.Info(ctx, "session closed", glog.String("session_id", session.ID()), glog.Uint64("player_id", session.PlayerID()), glog.String("room_id", session.RoomID()))
 }
@@ -205,7 +205,6 @@ func (s *Server) handleJoinRoom(ctx context.Context, session *Session, message p
 		return
 	}
 
-	session.SetPlayer(claims.PlayerID, claims.RoomID)
 	player := &logic.Player{
 		ID:      claims.PlayerID,
 		RoomID:  claims.RoomID,
@@ -216,6 +215,8 @@ func (s *Server) handleJoinRoom(ctx context.Context, session *Session, message p
 		s.sendError(session, "join_failed", err.Error())
 		return
 	}
+	// 入房成功后再绑定会话，避免失败连接继续投递输入污染房间索引
+	session.SetPlayer(claims.PlayerID, claims.RoomID)
 }
 
 // handlePlayerStatsQuery 处理玩家战绩查询

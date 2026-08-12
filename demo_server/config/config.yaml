@@ -58,8 +58,8 @@ room_server_01:
   token_secret: "room-token-secret"
   max_rooms: 1000
   max_players_per_room: 2
-  tick_rate: 20
-  snapshot_rate: 10
+  tick_rate: 80
+  snapshot_rate: 40
   read_timeout: "10s"
   write_queue_size: 128
   max_payload_size: 65536
@@ -67,7 +67,7 @@ room_server_01:
   player_capsule_radius: 0.35
   player_capsule_height: 1.8
   physics_ground_plane: true
-  physx_pvd_enabled: true
+  physx_pvd_enabled: false
   physx_pvd_host: "172.29.160.1"
   physx_pvd_port: 5425
   physx_pvd_timeout_ms: 100
@@ -75,4 +75,4 @@ room_server_01:
   map_collision_path: "config/maps/mfps_arena/collision.json"
   physics_hash: "sha256:70921a6cda71319a1bb4e203d23cc60dd09b42854bd5a3785ff892e2ec9387d8"
   max_input_hold_ticks: 3
-  game_duration: "3m"
+  game_duration: "1m"

@@ -170,6 +170,53 @@ func TestWorldStaticMapCollision(t *testing.T) {
 	}
 }
 
+// TestWorldStaticMeshMapCollision 验证地图静态 mesh 会阻挡玩家移动和射线
+func TestWorldStaticMeshMapCollision(t *testing.T) {
+	meshMapPath := writeTestMapCollision(t, "map_test", `
+    {
+      "id": "mesh_wall_test",
+      "shape": "mesh",
+      "position": [0, 0, 0],
+      "rotation": [0, 0, 0, 1],
+      "vertices": [-5, 0, 2, 5, 0, 2, -5, 3, 2, 5, 3, 2],
+      "triangles": [0, 2, 1, 1, 2, 3],
+      "is_trigger": false
+    }`)
+	world := newTestWorldWithMap(t, meshMapPath)
+	defer closeTestWorld(t, world)
+
+	if err := world.AddPlayer(1, logic.Vector3{X: 0, Y: 0, Z: 0}); err != nil {
+		t.Fatalf("add player: %v", err)
+	}
+	moveResult, err := world.MovePlayer(logic.MovePlayerRequest{
+		PlayerID:  1,
+		Direction: logic.Vector3{Z: 1},
+		Distance:  5,
+	})
+	if err != nil {
+		t.Fatalf("move player: %v", err)
+	}
+	if !moveResult.Blocked {
+		t.Fatal("expected movement to be blocked by map mesh wall")
+	}
+	if moveResult.Position.Z >= 2 {
+		t.Fatalf("expected player to stop before mesh wall, got z %.4f", moveResult.Position.Z)
+	}
+
+	hit, err := world.Raycast(logic.RaycastRequest{
+		Origin:         logic.Vector3{X: 0, Y: 1, Z: 0},
+		Direction:      logic.Vector3{Z: 1},
+		MaxDistance:    5,
+		IgnorePlayerID: 1,
+	})
+	if err != nil {
+		t.Fatalf("raycast mesh wall: %v", err)
+	}
+	if !hit.Hit || math.Abs(hit.Distance-2) > testFloatTolerance {
+		t.Fatalf("expected raycast to hit mesh wall near distance 2, got %+v", hit)
+	}
+}
+
 // TestWorldCreateMultipleRooms 验证多个房间 world 可以共享进程级 PhysX runtime
 func TestWorldCreateMultipleRooms(t *testing.T) {
 	mapPath := writeTestMapCollision(t, "map_test", `

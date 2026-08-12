@@ -13,10 +13,16 @@ import (
 )
 
 const (
-	mapCollisionUnitsMeter   = "meter"     // 地图碰撞单位
-	mapCollisionRotationXYZW = "quat_xyzw" // 地图旋转四元数格式
-	mapColliderShapeBox      = "box"       // box 碰撞体
-	projectRootMarkFile      = "go.mod"    // 项目根目录标记文件
+	mapCollisionUnitsMeter        = "meter"     // 地图碰撞单位
+	mapCollisionRotationXYZW      = "quat_xyzw" // 地图旋转四元数格式
+	mapColliderShapeBox           = "box"       // box 碰撞体
+	mapColliderShapeMesh          = "mesh"      // triangle mesh 碰撞体
+	mapMeshVertexElementSize      = 3           // mesh 顶点数组每个顶点的元素数量
+	mapMeshTriangleElementSize    = 3           // mesh 三角形索引每个三角面的元素数量
+	mapMeshMinVertexElementCount  = 9           // mesh 至少 3 个顶点
+	mapMeshMinTriangleIndexCount  = 3           // mesh 至少 1 个三角形
+	mapMeshMinTriangleAreaSquared = 1e-12       // mesh 三角形退化面积阈值
+	projectRootMarkFile           = "go.mod"    // 项目根目录标记文件
 )
 
 var (
@@ -54,6 +60,8 @@ type MapCollider struct {
 	Position  Vector3Raw `json:"position"`   // 世界坐标
 	Rotation  QuatRaw    `json:"rotation"`   // 世界旋转
 	Size      Vector3Raw `json:"size"`       // box完整尺寸
+	Vertices  []float64  `json:"vertices"`   // mesh世界坐标顶点，按 x/y/z 平铺
+	Triangles []int      `json:"triangles"`  // mesh三角形索引，3个索引组成一个三角形
 	Radius    float64    `json:"radius"`     // sphere或capsule半径
 	Height    float64    `json:"height"`     // capsule高度
 	Direction string     `json:"direction"`  // capsule轴向
@@ -185,7 +193,7 @@ func validateMapCollider(collider MapCollider) error {
 		return errors.New("collider rotation is invalid")
 	}
 
-	// 当前 PhysX 接入第一阶段只加载实体 box，触发器留给后续区域逻辑处理
+	// 触发器不参与实体阻挡，后续区域逻辑单独处理
 	if collider.IsTrigger {
 		return nil
 	}
@@ -195,9 +203,40 @@ func validateMapCollider(collider MapCollider) error {
 			return errors.New("box size is invalid")
 		}
 		return nil
+	case mapColliderShapeMesh:
+		return validateMapMeshCollider(collider)
 	default:
 		return fmt.Errorf("%w: %s", ErrUnsupportedMapColliderShape, collider.Shape)
 	}
+}
+
+// validateMapMeshCollider 校验 mesh 碰撞体的顶点和索引
+func validateMapMeshCollider(collider MapCollider) error {
+	if len(collider.Vertices) < mapMeshMinVertexElementCount || len(collider.Vertices)%mapMeshVertexElementSize != 0 {
+		return errors.New("mesh vertices is invalid")
+	}
+	for i, value := range collider.Vertices {
+		if !isFinite(value) {
+			return fmt.Errorf("mesh vertex %d is invalid", i)
+		}
+	}
+
+	if len(collider.Triangles) < mapMeshMinTriangleIndexCount || len(collider.Triangles)%mapMeshTriangleElementSize != 0 {
+		return errors.New("mesh triangles is invalid")
+	}
+	vertexCount := len(collider.Vertices) / mapMeshVertexElementSize
+	for i := 0; i < len(collider.Triangles); i += mapMeshTriangleElementSize {
+		a := collider.Triangles[i]
+		b := collider.Triangles[i+1]
+		c := collider.Triangles[i+2]
+		if a < 0 || b < 0 || c < 0 || a >= vertexCount || b >= vertexCount || c >= vertexCount {
+			return fmt.Errorf("mesh triangle %d index out of range", i/mapMeshTriangleElementSize)
+		}
+		if a == b || b == c || a == c || meshTriangleAreaSquared(collider.Vertices, a, b, c) <= mapMeshMinTriangleAreaSquared {
+			return fmt.Errorf("mesh triangle %d is degenerate", i/mapMeshTriangleElementSize)
+		}
+	}
+	return nil
 }
 
 // validateMapSpawnPoint 校验出生点配置
@@ -226,6 +265,25 @@ func validRawQuaternion(value QuatRaw) bool {
 	}
 	lengthSquared := value[0]*value[0] + value[1]*value[1] + value[2]*value[2] + value[3]*value[3]
 	return lengthSquared > 0.000001
+}
+
+// meshTriangleAreaSquared 计算 mesh 三角形叉积长度平方
+func meshTriangleAreaSquared(vertices []float64, a int, b int, c int) float64 {
+	ax, ay, az := meshVertex(vertices, a)
+	bx, by, bz := meshVertex(vertices, b)
+	cx, cy, cz := meshVertex(vertices, c)
+	abx, aby, abz := bx-ax, by-ay, bz-az
+	acx, acy, acz := cx-ax, cy-ay, cz-az
+	crossX := aby*acz - abz*acy
+	crossY := abz*acx - abx*acz
+	crossZ := abx*acy - aby*acx
+	return crossX*crossX + crossY*crossY + crossZ*crossZ
+}
+
+// meshVertex 从平铺顶点数组读取一个顶点
+func meshVertex(vertices []float64, index int) (float64, float64, float64) {
+	offset := index * mapMeshVertexElementSize
+	return vertices[offset], vertices[offset+1], vertices[offset+2]
 }
 
 // toLogicVector3 将 JSON 三维数组转换为 logic 向量
