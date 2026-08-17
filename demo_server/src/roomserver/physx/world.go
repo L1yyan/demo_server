@@ -3,8 +3,10 @@
 package physx
 
 /*
-#cgo CXXFLAGS: -std=c++17 -I${SRCDIR}/../../../third_party/physx-sdk/include -I${SRCDIR}/../../../third_party/physx-sdk/pxshared/include
-#cgo LDFLAGS: -L${SRCDIR}/../../../third_party/physx-sdk/lib/linux.x86_64/release -lPhysXExtensions_static_64 -lPhysX_static_64 -lPhysXPvdSDK_static_64 -lPhysXCooking_static_64 -lPhysXCommon_static_64 -lPhysXCooking_static_64 -lPhysXCommon_static_64 -lPhysXFoundation_static_64 -ldl -lpthread -lstdc++
+#cgo linux CXXFLAGS: -std=c++17 -I${SRCDIR}/../../../third_party/physx-sdk/include -I${SRCDIR}/../../../third_party/physx-sdk/pxshared/include
+#cgo linux LDFLAGS: -L${SRCDIR}/../../../third_party/physx-sdk/lib/linux.x86_64/release -lPhysXExtensions_static_64 -lPhysX_static_64 -lPhysXPvdSDK_static_64 -lPhysXCooking_static_64 -lPhysXCommon_static_64 -lPhysXCooking_static_64 -lPhysXCommon_static_64 -lPhysXFoundation_static_64 -ldl -lpthread -lstdc++
+#cgo windows CFLAGS: -I${SRCDIR}
+#cgo windows LDFLAGS: -L${SRCDIR}/../../../bin/windows/lib -lphysx_bridge
 #include <stdlib.h>
 #include "physx_bridge.h"
 

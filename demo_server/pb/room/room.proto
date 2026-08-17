@@ -53,6 +53,10 @@ message Heartbeat {
   int64 server_tick = 3; // 服务端房间帧号
 }
 
+// LeaveRoomReq 主动离开房间请求
+message LeaveRoomReq {
+}
+
 // PlayerInput 玩家输入
 message PlayerInput {
   int64 client_tick = 1; // 客户端帧号

@@ -1,4 +1,4 @@
-//go:build physx
+//go:build physx && !windows
 
 #include "physx_bridge.h"
 
@@ -300,7 +300,7 @@ PxPhysics* world_physics(px_world* world) {
 
 extern "C" {
 
-px_world* px_world_create(int create_ground_plane, px_pvd_config pvd_config, char* err, int err_len) {
+PHYSX_BRIDGE_API px_world* px_world_create(int create_ground_plane, px_pvd_config pvd_config, char* err, int err_len) {
     px_runtime* runtime = acquire_runtime(pvd_config, err, err_len);
     if (runtime == nullptr) {
         return nullptr;
@@ -352,7 +352,7 @@ px_world* px_world_create(int create_ground_plane, px_pvd_config pvd_config, cha
     return world;
 }
 
-void px_world_release(px_world* world) {
+PHYSX_BRIDGE_API void px_world_release(px_world* world) {
     if (world == nullptr) {
         return;
     }
@@ -388,7 +388,7 @@ void px_world_release(px_world* world) {
     delete world;
 }
 
-int px_world_add_static_box(px_world* world, px_vec3 position, px_quat rotation, px_vec3 size, char* err, int err_len) {
+PHYSX_BRIDGE_API int px_world_add_static_box(px_world* world, px_vec3 position, px_quat rotation, px_vec3 size, char* err, int err_len) {
     PxPhysics* physics = world_physics(world);
     if (physics == nullptr || world->scene == nullptr || world->material == nullptr) {
         set_error(err, err_len, "world is nil");
@@ -422,7 +422,7 @@ int px_world_add_static_box(px_world* world, px_vec3 position, px_quat rotation,
     return 0;
 }
 
-int px_world_add_static_mesh(px_world* world, const double* vertices, int vertex_count, const int* triangles, int triangle_count, char* err, int err_len) {
+PHYSX_BRIDGE_API int px_world_add_static_mesh(px_world* world, const double* vertices, int vertex_count, const int* triangles, int triangle_count, char* err, int err_len) {
     PxPhysics* physics = world_physics(world);
     if (physics == nullptr || world->scene == nullptr || world->material == nullptr) {
         set_error(err, err_len, "world is nil");
@@ -485,7 +485,7 @@ int px_world_add_static_mesh(px_world* world, const double* vertices, int vertex
     return 0;
 }
 
-int px_world_add_player_capsule(px_world* world, uint64_t player_id, px_vec3 position, double radius, double height, char* err, int err_len) {
+PHYSX_BRIDGE_API int px_world_add_player_capsule(px_world* world, uint64_t player_id, px_vec3 position, double radius, double height, char* err, int err_len) {
     PxPhysics* physics = world_physics(world);
     if (physics == nullptr || world->scene == nullptr || world->material == nullptr) {
         set_error(err, err_len, "world is nil");
@@ -514,7 +514,7 @@ int px_world_add_player_capsule(px_world* world, uint64_t player_id, px_vec3 pos
     return 0;
 }
 
-int px_world_remove_player(px_world* world, uint64_t player_id, char* err, int err_len) {
+PHYSX_BRIDGE_API int px_world_remove_player(px_world* world, uint64_t player_id, char* err, int err_len) {
     if (world == nullptr) {
         set_error(err, err_len, "world is nil");
         return 1;
@@ -530,7 +530,7 @@ int px_world_remove_player(px_world* world, uint64_t player_id, char* err, int e
     return 0;
 }
 
-int px_world_move_player(px_world* world, uint64_t player_id, px_vec3 direction, double distance, double delta_time, int jump, int grounded, double vertical_velocity, px_vec3* out_position, int* out_blocked, int* out_grounded, double* out_vertical_velocity, char* err, int err_len) {
+PHYSX_BRIDGE_API int px_world_move_player(px_world* world, uint64_t player_id, px_vec3 direction, double distance, double delta_time, int jump, int grounded, double vertical_velocity, px_vec3* out_position, int* out_blocked, int* out_grounded, double* out_vertical_velocity, char* err, int err_len) {
     if (world == nullptr || out_position == nullptr || out_blocked == nullptr || out_grounded == nullptr || out_vertical_velocity == nullptr) {
         set_error(err, err_len, "invalid move request");
         return 1;
@@ -610,7 +610,7 @@ int px_world_move_player(px_world* world, uint64_t player_id, px_vec3 direction,
     return 0;
 }
 
-int px_world_get_player_position(px_world* world, uint64_t player_id, px_vec3* out_position, char* err, int err_len) {
+PHYSX_BRIDGE_API int px_world_get_player_position(px_world* world, uint64_t player_id, px_vec3* out_position, char* err, int err_len) {
     if (world == nullptr || out_position == nullptr) {
         set_error(err, err_len, "invalid get position request");
         return 1;
@@ -624,7 +624,7 @@ int px_world_get_player_position(px_world* world, uint64_t player_id, px_vec3* o
     return 0;
 }
 
-int px_world_set_player_position(px_world* world, uint64_t player_id, px_vec3 position, char* err, int err_len) {
+PHYSX_BRIDGE_API int px_world_set_player_position(px_world* world, uint64_t player_id, px_vec3 position, char* err, int err_len) {
     if (world == nullptr || !valid_vec3(position)) {
         set_error(err, err_len, "invalid set position request");
         return 1;
@@ -640,7 +640,7 @@ int px_world_set_player_position(px_world* world, uint64_t player_id, px_vec3 po
     return 0;
 }
 
-int px_world_raycast(px_world* world, px_vec3 origin, px_vec3 direction, double max_distance, uint32_t mask, uint64_t ignored_player_id, px_raycast_hit* out_hit, char* err, int err_len) {
+PHYSX_BRIDGE_API int px_world_raycast(px_world* world, px_vec3 origin, px_vec3 direction, double max_distance, uint32_t mask, uint64_t ignored_player_id, px_raycast_hit* out_hit, char* err, int err_len) {
     if (world == nullptr || out_hit == nullptr) {
         set_error(err, err_len, "invalid raycast request");
         return 1;
@@ -686,7 +686,7 @@ int px_world_raycast(px_world* world, px_vec3 origin, px_vec3 direction, double 
     return 0;
 }
 
-int px_world_batch_raycast(px_world* world, const px_vec3* origins, const px_vec3* directions, const double* max_distances, const uint32_t* masks, const uint64_t* ignored_player_ids, int count, px_raycast_hit* out_hits, char* err, int err_len) {
+PHYSX_BRIDGE_API int px_world_batch_raycast(px_world* world, const px_vec3* origins, const px_vec3* directions, const double* max_distances, const uint32_t* masks, const uint64_t* ignored_player_ids, int count, px_raycast_hit* out_hits, char* err, int err_len) {
     if (world == nullptr || origins == nullptr || directions == nullptr || max_distances == nullptr || masks == nullptr || ignored_player_ids == nullptr || out_hits == nullptr || count < 0) {
         set_error(err, err_len, "invalid batch raycast request");
         return 1;

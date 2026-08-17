@@ -22,7 +22,6 @@ const (
 	mapMeshMinVertexElementCount  = 9           // mesh 至少 3 个顶点
 	mapMeshMinTriangleIndexCount  = 3           // mesh 至少 1 个三角形
 	mapMeshMinTriangleAreaSquared = 1e-12       // mesh 三角形退化面积阈值
-	projectRootMarkFile           = "go.mod"    // 项目根目录标记文件
 )
 
 var (
@@ -141,6 +140,15 @@ func resolveProjectPath(path string) (string, error) {
 	if filepath.IsAbs(path) {
 		return filepath.Clean(path), nil
 	}
+	// 部署包内没有 go.mod 时，优先按当前工作目录解析相对路径
+	workDir, err := os.Getwd()
+	if err == nil {
+		candidate := filepath.Join(workDir, path)
+		if _, statErr := os.Stat(candidate); statErr == nil {
+			return filepath.Clean(candidate), nil
+		}
+	}
+
 	root, err := findProjectRoot()
 	if err != nil {
 		return "", err
@@ -342,7 +350,7 @@ func findProjectRoot() (string, error) {
 
 	currentDir := workDir
 	for {
-		markPath := filepath.Join(currentDir, projectRootMarkFile)
+		markPath := filepath.Join(currentDir, "go.mod")
 		if _, err := os.Stat(markPath); err == nil {
 			return currentDir, nil
 		}

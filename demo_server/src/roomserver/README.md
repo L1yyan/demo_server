@@ -332,7 +332,24 @@ Server.HandleSessionClosed
 
 离房后出生点会释放，因为 `nextSpawnPoint` 只根据当前 `players` 里的 `SpawnID` 判断占用。
 
-## 13. 手动测试思路
+## 13. Windows 构建部署
+
+Windows 原生链路新增以下脚本：
+
+```powershell
+.\scripts\proto_windows.ps1
+.\scripts\setup_physx_windows.ps1
+.\scripts\build_physx_bridge_windows.ps1
+.\scripts\build_all_windows.ps1
+.\scripts\deploy_windows.ps1
+.\scripts\start_all_windows.ps1
+```
+
+推荐顺序是先准备 PhysX SDK，再构建 bridge DLL，最后构建三个服务并打部署包。部署包默认输出到 `dist/windows/demo_server`，启动脚本会自动设置 `DEMO_SERVER_CONFIG` 指向 `config\config.windows.yaml`。
+
+Windows 下 roomserver 仍然使用 `physics_backend: "physx"`，只是 PhysX 后端由 `physx_bridge.dll` 提供。
+
+## 14. 手动测试思路
 
 1. 启动 roomserver：
 

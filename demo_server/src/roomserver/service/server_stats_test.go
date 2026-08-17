@@ -30,7 +30,28 @@ func TestHandlePlayerStatsQueryRequiresJoinedSession(t *testing.T) {
 	}
 }
 
-// TestHandlePlayerStatsQueryReturnsStats 验证战绩查询返回玩家击杀死亡数量
+// TestHandleLeaveRoomRemovesJoinedPlayer 验证主动离房会清理玩家房间索引
+func TestHandleLeaveRoomRemovesJoinedPlayer(t *testing.T) {
+	cfg := roomconfig.DefaultConfig()
+	server := NewServer(cfg)
+	server.manager = logic.NewRoomManagerWithOptions(context.Background(), 10, 2, 20, 10, logic.SyncConfig{}, "", "", cfg.GameDuration, nil, logic.NewSimplePhysicsWorldFactory())
+	session := NewSession("session-test", nil, cfg, nil)
+	session.SetPlayer(1, "room-test")
+	player := &logic.Player{ID: 1, RoomID: "room-test", Session: session}
+	if err := server.manager.JoinRoom("room-test", player); err != nil {
+		t.Fatalf("join room: %v", err)
+	}
+
+	server.HandleMessage(context.Background(), session, protocol.Message{Type: protocol.MsgLeaveRoom})
+
+	if session.PlayerID() != 0 || session.RoomID() != "" {
+		t.Fatalf("expected session player cleared, got player=%d room=%q", session.PlayerID(), session.RoomID())
+	}
+	if _, err := server.manager.QueryPlayerStats(1, 0); err == nil {
+		t.Fatal("expected player stats query to fail after leave")
+	}
+}
+
 func TestHandlePlayerStatsQueryReturnsStats(t *testing.T) {
 	cfg := roomconfig.DefaultConfig()
 	server := NewServer(cfg)

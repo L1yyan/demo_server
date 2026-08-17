@@ -37,6 +37,8 @@ const (
 	MsgPlayerStatsQuery uint16 = 13
 	// MsgPlayerStatsResp 玩家战绩响应
 	MsgPlayerStatsResp uint16 = 14
+	// MsgLeaveRoom 主动离开房间
+	MsgLeaveRoom uint16 = 15
 )
 
 var (

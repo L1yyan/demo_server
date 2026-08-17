@@ -41,3 +41,16 @@ func TestLoadRoomServerConfig(t *testing.T) {
 		t.Fatalf("expected yaml max input hold ticks 3, got %d", cfg.RoomServer01.MaxInputHoldTicks)
 	}
 }
+
+// TestFindConfigPathFromEnv 验证配置路径可通过环境变量覆盖
+func TestFindConfigPathFromEnv(t *testing.T) {
+	t.Setenv(configPathEnvName, `C:\demo_server\config.windows.yaml`)
+
+	path, err := FindConfigPath()
+	if err != nil {
+		t.Fatalf("find config path: %v", err)
+	}
+	if path != `C:\demo_server\config.windows.yaml` {
+		t.Fatalf("unexpected config path: %s", path)
+	}
+}

@@ -1,15 +1,13 @@
-#日志
+# Windows 本地部署配置样例
 log:
   path: "bin/logs"
 
-#验证码邮箱
 email:
   host: smtp.126.com
   port: 465
   username: ""
-  password: 
+  password:
 
-#Jwt
 jwt:
   secretKey: "rM8jI7hB6mH7tZ1nN5"
   tokenExpire: "1h"
@@ -17,10 +15,9 @@ jwt:
   tokenHeaderKey: "Authorization"
   refreshTokenKey: "Refresh-Token"
   newAccessTokenKey: "New-Access-Token"
-  skipPaths:  #跳过jwt验证
+  skipPaths:
     - ""
 
-#logic_server
 logic_server_01:
   listen_addr: "0.0.0.0:8080"
   match_server_addr: "127.0.0.1:8090"
@@ -39,19 +36,17 @@ logic_server_01:
     max_open_conns: 100
     conn_max_idle_time: 300
 
-#match_server
 match_server_01:
-  listen_addr: ":8090"
+  listen_addr: "0.0.0.0:8090"
   token_secret: "room-token-secret"
   token_expire: "1m"
   max_players_per_room: 2
   room_servers:
     - server_id: "room-01"
-      server_addr: "172.29.168.6:9001"
+      server_addr: "127.0.0.1:9001"
       max_rooms: 1000
       max_players_per_room: 2
 
-#room_server
 room_server_01:
   server_id: "room-01"
   listen_addr: "0.0.0.0:9001"
@@ -68,7 +63,7 @@ room_server_01:
   player_capsule_height: 1.8
   physics_ground_plane: true
   physx_pvd_enabled: false
-  physx_pvd_host: "172.29.160.1"
+  physx_pvd_host: "127.0.0.1"
   physx_pvd_port: 5425
   physx_pvd_timeout_ms: 100
   default_map_id: "mfps_arena"

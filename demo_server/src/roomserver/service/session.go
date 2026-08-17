@@ -115,7 +115,9 @@ func (s *Session) Start(ctx context.Context) {
 func (s *Session) Close() {
 	s.closeMu.Do(func() {
 		close(s.closeCh)
-		_ = s.conn.Close()
+		if s.conn != nil {
+			_ = s.conn.Close()
+		}
 	})
 }
 

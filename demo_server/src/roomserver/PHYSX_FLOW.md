@@ -1030,7 +1030,31 @@ Room.updatePlayers
 - 高频场景下的批量移动接口。
 - 更完整的角色控制能力，例如重力、跳跃、坡面、台阶、滑动。
 
-## 20. 已执行验证
+## 20. Windows 构建部署脚本
+
+Windows 新增以下脚本，和 Linux 链路并存：
+
+```powershell
+.\scripts\proto_windows.ps1
+.\scripts\setup_physx_windows.ps1
+.\scripts\build_physx_bridge_windows.ps1
+.\scripts\build_all_windows.ps1
+.\scripts\deploy_windows.ps1
+.\scripts\start_all_windows.ps1
+```
+
+脚本职责分别是：
+
+1. `proto_windows.ps1` 生成 `gen/` 下的 protobuf 代码。
+2. `setup_physx_windows.ps1` 准备 Windows 版 PhysX SDK。
+3. `build_physx_bridge_windows.ps1` 构建 `physx_bridge.dll`。
+4. `build_all_windows.ps1` 构建三个 Windows 服务 exe。
+5. `deploy_windows.ps1` 打包部署目录并写入启动脚本。
+6. `start_all_windows.ps1` 读取 `config\config.windows.yaml` 并按顺序启动服务。
+
+Windows 部署包默认会把 `config\maps\mfps_arena\collision.json` 一并带上，避免 roomserver 启动时找不到地图碰撞文件。
+
+## 21. 已执行验证
 
 已执行过以下命令：
 

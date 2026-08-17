@@ -14,6 +14,7 @@ import (
 )
 
 const (
+	configPathEnvName      = "DEMO_SERVER_CONFIG" // 配置文件路径环境变量
 	defaultConfigPath      = "config/config.yaml" // 默认配置文件路径
 	defaultLogicListenAddr = ":8080"              // logicserver 默认监听地址
 	defaultMatchServerAddr = "127.0.0.1:8090"     // 默认matchserver地址
@@ -120,8 +121,13 @@ func Load(path string) (*Config, error) {
 	return &cfg, nil
 }
 
-// FindConfigPath 从当前目录向上查找默认配置文件
+// FindConfigPath 查找配置文件路径
 func FindConfigPath() (string, error) {
+	// Windows 部署脚本通过环境变量指定配置，避免依赖启动目录
+	if envPath := strings.TrimSpace(os.Getenv(configPathEnvName)); envPath != "" {
+		return envPath, nil
+	}
+
 	root, err := findProjectRoot()
 	if err != nil {
 		return "", err

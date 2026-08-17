@@ -112,6 +112,8 @@ func (s *Server) HandleMessage(ctx context.Context, session *Session, message pr
 		s.handleJoinRoom(ctx, session, message)
 	case protocol.MsgHeartbeat:
 		s.handleHeartbeat(session, message)
+	case protocol.MsgLeaveRoom:
+		s.handleLeaveRoom(ctx, session)
 	case protocol.MsgPlayerInput:
 		s.handlePlayerInput(ctx, session, message)
 	case protocol.MsgPlayerStatsQuery:
@@ -268,6 +270,21 @@ func (s *Server) handleHeartbeat(session *Session, requestMessage protocol.Messa
 		return
 	}
 	session.Send(message)
+}
+
+// handleLeaveRoom 处理主动离房
+func (s *Server) handleLeaveRoom(ctx context.Context, session *Session) {
+	if session.PlayerID() == 0 {
+		s.sendError(session, "not_joined", "player not joined room")
+		return
+	}
+	playerID := session.PlayerID()
+	roomID := session.RoomID()
+	if s.manager != nil {
+		s.manager.LeaveRoom(playerID, roomID)
+	}
+	session.SetPlayer(0, "")
+	glog.Info(ctx, "player leave room requested", glog.String("session_id", session.ID()), glog.Uint64("player_id", playerID), glog.String("room_id", roomID))
 }
 
 // handlePlayerInput 处理玩家输入

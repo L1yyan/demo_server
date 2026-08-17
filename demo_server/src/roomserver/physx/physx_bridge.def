@@ -1,0 +1,13 @@
+LIBRARY physx_bridge
+EXPORTS
+    px_world_create
+    px_world_release
+    px_world_add_static_box
+    px_world_add_static_mesh
+    px_world_add_player_capsule
+    px_world_remove_player
+    px_world_move_player
+    px_world_get_player_position
+    px_world_set_player_position
+    px_world_raycast
+    px_world_batch_raycast
