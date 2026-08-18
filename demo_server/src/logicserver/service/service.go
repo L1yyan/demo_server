@@ -112,6 +112,36 @@ func (s *LogicService) ModifyPlayerNickname(ctx context.Context, req *logicpb.Mo
 	return &resp, nil
 }
 
+// GetPlayerInfo 获取玩家信息
+func (s *LogicService) GetPlayerInfo(ctx context.Context, req *logicpb.GetPlayerInfoReq) (*logicpb.GetPlayerInfoResp, error) {
+	var resp logicpb.GetPlayerInfoResp
+	if s == nil || s.playerInfo == nil {
+		resp.Status = false
+		resp.Content = "server unavailable"
+		return &resp, nil
+	}
+	if req == nil {
+		resp.Status = false
+		resp.Content = "invalid request"
+		return &resp, nil
+	}
+	userInfo, err := s.playerInfo.GetPlayerInfo(ctx, req.AccessToken, req.PlayerId)
+	if err != nil {
+		resp.Status = false
+		resp.Content = err.Error()
+		return &resp, nil
+	}
+	resp.Status = true
+	resp.Content = "player info retrieved successfully"
+	resp.PlayerId = userInfo.UserID
+	resp.PlayerExperience = userInfo.Experience
+	resp.PlayerLevel = userInfo.Level
+	resp.Player_Nickname = userInfo.Nickname
+	resp.PlayerCoins = userInfo.Coins
+	resp.PlayerProfilePhotoId = userInfo.ProfilePhotoID
+	return &resp, nil
+}
+
 // MatchRoom 处理客户端匹配请求
 func (s *LogicService) MatchRoom(ctx context.Context, req *logicpb.MatchRoomReq) (*logicpb.MatchRoomResp, error) {
 	if s == nil || s.match == nil {

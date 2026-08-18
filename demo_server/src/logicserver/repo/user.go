@@ -10,6 +10,8 @@ import (
 	conf "demo_server/config"
 	"demo_server/pkg/mongodb"
 
+	"demo_server/src/logicserver/consts"
+
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -30,10 +32,8 @@ var (
 
 // User 用户登录数据
 type User struct {
-	ID           primitive.ObjectID `bson:"_id,omitempty"` // MongoDB文档ID
-	UserID       uint64             `bson:"user_id"`       // 业务用户ID
-	Email        string             `bson:"email"`         // 邮箱
-	PasswordHash string             `bson:"password_hash"` // 密码哈希
+	ID       primitive.ObjectID `bson:"_id,omitempty"` // MongoDB文档ID
+	UserInfo consts.UserInfo    `bson:",inline"`       // 用户信息
 }
 
 // UserRepo 用户持久化仓库
@@ -88,10 +88,17 @@ func (r *UserRepo) CreateUser(ctx context.Context, email string, passwordHash st
 	}
 
 	user := &User{
-		ID:           primitive.NewObjectID(),
-		UserID:       userID,
-		Email:        email,
-		PasswordHash: passwordHash,
+		ID: primitive.NewObjectID(),
+		UserInfo: consts.UserInfo{
+			UserID:         userID,
+			Email:          email,
+			Nickname:       fmt.Sprintf("Player%d", userID),
+			Level:          "1",
+			Experience:     0,
+			Coins:          10000,
+			ProfilePhotoID: 0,
+			PasswordHash:   passwordHash,
+		},
 	}
 	if _, err := r.collection.InsertOne(ctx, user); err != nil {
 		if isDuplicateKeyError(err) {
@@ -125,23 +132,24 @@ func (r *UserRepo) FindByEmail(ctx context.Context, email string) (*User, error)
 }
 
 // FindByUserID 根据业务用户ID查询登录用户
-func (r *UserRepo) FindByUserID(ctx context.Context, userID uint64) (*User, error) {
+func (r *UserRepo) FindByUserID(ctx context.Context, userID uint64) (consts.UserInfo, error) {
 	if err := r.validate(); err != nil {
-		return nil, err
+		return consts.UserInfo{}, err
 	}
 	if userID == 0 {
-		return nil, errors.New("user id is empty")
+		return consts.UserInfo{}, errors.New("user id is empty")
 	}
 
 	var user User
 	err := r.collection.FindOne(ctx, bson.M{"user_id": userID}).Decode(&user)
 	if errors.Is(err, mongo.ErrNoDocuments) {
-		return nil, ErrUserNotFound
+		return consts.UserInfo{}, ErrUserNotFound
 	}
 	if err != nil {
-		return nil, fmt.Errorf("find user by user id: %w", err)
+		return consts.UserInfo{}, fmt.Errorf("find user by user id: %w", err)
 	}
-	return &user, nil
+	userInfo := user.UserInfo
+	return userInfo, nil
 }
 
 // MongoClient 返回已初始化的 MongoDB 客户端

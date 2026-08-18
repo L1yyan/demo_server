@@ -96,21 +96,22 @@ message ModifyPlayerNicknameResp {
 }
 
 // PlayerInfoReq 玩家账户信息请求
-message PlayerInfoReq {
+message GetPlayerInfoReq {
   string access_token = 1; //短token
   string refresh_token = 2; //长期token
+  uint64 player_id = 3; //想要查询信息的玩家id
 }
 
 //PlayerInfoResq 玩家账户信息响应
-message PlayerInfoResq {
+message GetPlayerInfoResp {
   bool status = 1; //状态
   string content = 2; //返回信息
   string access_token = 3; //当前可用短token
   string refresh_token = 4; //长期token
   string player_Nickname = 5; //玩家昵称
   string player_level = 6; //玩家等级
-  string player_id = 7; //玩家ID
-  uint64 player_coins = 8; //玩家货币数量
-  int32 player_profile_photo_id = 9; // 玩家头像id (头像都是服务端预设的几个图片，传入id就可以获得指定头像)
+  uint64 player_experience = 7; // 玩家经验值
+  uint64 player_id = 8; //玩家ID
+  uint64 player_coins = 9; //玩家货币数量
+  int32 player_profile_photo_id = 10; // 玩家头像id (头像都是服务端预设的几个图片，传入id就可以获得指定头像)
 }
-

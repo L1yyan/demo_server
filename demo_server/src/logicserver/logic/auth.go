@@ -85,11 +85,11 @@ func (l *AuthLogic) Register(ctx context.Context, email string, password string)
 	if err != nil {
 		return nil, err
 	}
-	if user == nil || user.UserID == 0 || user.Email == "" {
+	if user == nil || user.UserInfo.UserID == 0 || user.UserInfo.Email == "" {
 		return nil, errors.New("created user is invalid")
 	}
 
-	return l.issueLoginTokens(ctx, user.UserID, user.Email)
+	return l.issueLoginTokens(ctx, user.UserInfo.UserID, user.UserInfo.Email)
 }
 
 // Login 使用邮箱和密码登录
@@ -111,16 +111,16 @@ func (l *AuthLogic) Login(ctx context.Context, email string, password string) (*
 	if err != nil {
 		return nil, err
 	}
-	if user.UserID == 0 || user.PasswordHash == "" {
+	if user.UserInfo.UserID == 0 || user.UserInfo.PasswordHash == "" {
 		return nil, ErrInvalidCredential
 	}
 
 	// 校验 bcrypt 密码哈希
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+	if err := bcrypt.CompareHashAndPassword([]byte(user.UserInfo.PasswordHash), []byte(password)); err != nil {
 		return nil, ErrInvalidCredential
 	}
 
-	return l.issueLoginTokens(ctx, user.UserID, user.Email)
+	return l.issueLoginTokens(ctx, user.UserInfo.UserID, user.UserInfo.Email)
 }
 
 // VerifyToken 校验登录 token，必要时刷新短 token
