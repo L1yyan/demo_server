@@ -260,3 +260,22 @@ func (r *UserRepo) ModifyNickname(ctx context.Context, userID uint64, nickname s
 	}
 	return nil
 }
+
+func (r *UserRepo) ModifyProfilePhoto(ctx context.Context, userID uint64, photoId int32) error {
+	if err := r.validate(); err != nil {
+		return err
+	}
+	// 按业务用户ID更新头像，用户不存在时通过匹配数量返回明确错误
+	result, err := r.collection.UpdateOne(
+		ctx,
+		bson.M{"user_id": userID},
+		bson.M{"$set": bson.M{"profile_photo_id": photoId}},
+	)
+	if err != nil {
+		return fmt.Errorf("modify profile photo: %w", err)
+	}
+	if result.MatchedCount == 0 {
+		return ErrUserNotFound
+	}
+	return nil
+}

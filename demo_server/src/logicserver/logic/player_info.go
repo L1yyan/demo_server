@@ -73,3 +73,26 @@ func (p *PlayerInfoLogic) GetPlayerInfo(ctx context.Context, token string, playe
 		return p.userRepo.FindByUserID(ctx, userId)
 	}
 }
+
+// Modifyplayerprofilephoto 修改玩家头像
+func (p *PlayerInfoLogic) ModifyPlayerProfilePhoto(ctx context.Context, token string, photoId int32) error {
+	if p == nil || p.userRepo == nil || p.tokens == nil {
+		return errors.New("player info logic is nil")
+	}
+	if token == "" {
+		return errors.New("token is empty")
+	}
+	claims, ok, err := p.jwt.ParseToken(token)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("invalid token")
+	}
+	userId := claims.UserID
+	_, err = p.userRepo.FindByUserID(ctx, userId)
+	if err != nil {
+		return err
+	}
+	return p.userRepo.ModifyProfilePhoto(ctx, userId, photoId)
+}

@@ -142,6 +142,31 @@ func (s *LogicService) GetPlayerInfo(ctx context.Context, req *logicpb.GetPlayer
 	return &resp, nil
 }
 
+// ModifyPlayerProfilePhoto 修改玩家头像
+func (s *LogicService) ModifyPlayerProfilePhoto(ctx context.Context, req *logicpb.ModifyPlayerProfilePhotoReq) (*logicpb.ModifyPlayerProfilePhotoResp, error) {
+	var resp logicpb.ModifyPlayerProfilePhotoResp
+	if s == nil || s.playerInfo == nil {
+		resp.Status = false
+		resp.Content = "server unavailable"
+		return &resp, nil
+	}
+	if req == nil {
+		resp.Status = false
+		resp.Content = "invalid request"
+		return &resp, nil
+	}
+
+	err := s.playerInfo.ModifyPlayerProfilePhoto(ctx, req.AccessToken, req.PlayerProfilePhotoId)
+	if err != nil {
+		resp.Status = false
+		resp.Content = err.Error()
+		return &resp, nil
+	}
+	resp.Status = true
+	resp.Content = "profile photo modified successfully"
+	return &resp, nil
+}
+
 // MatchRoom 处理客户端匹配请求
 func (s *LogicService) MatchRoom(ctx context.Context, req *logicpb.MatchRoomReq) (*logicpb.MatchRoomResp, error) {
 	if s == nil || s.match == nil {

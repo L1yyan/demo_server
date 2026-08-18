@@ -95,6 +95,19 @@ message ModifyPlayerNicknameResp {
   string content = 2; //返回信息
 }
 
+// ModifyPlayerProfilePhotoReq 修改玩家头像请求
+message ModifyPlayerProfilePhotoReq {
+  string access_token = 1; //短token
+  string refresh_token = 2; //长期token
+  int32 player_profile_photo_id = 3; //玩家头像id
+}
+
+// ModifyPlayerProfilePhotoResp 修改玩家头像响应
+message ModifyPlayerProfilePhotoResp {
+  bool status = 1; //状态
+  string content = 2; //返回信息
+}
+
 // PlayerInfoReq 玩家账户信息请求
 message GetPlayerInfoReq {
   string access_token = 1; //短token
