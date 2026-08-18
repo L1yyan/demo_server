@@ -60,6 +60,10 @@ func main() {
 	if err != nil {
 		glog.Fatal(ctx, "create auth logic failed", glog.Err(err))
 	}
+	playerInfoLogic, err := logic.NewPlayerInfoLogic(userRepo, tokenRepo, jwttool.Instance())
+	if err != nil {
+		glog.Fatal(ctx, "create player info logic failed", glog.Err(err))
+	}
 
 	matchConn, err := grpc.NewClient(cfg.LogicServer01.MatchServerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -72,7 +76,7 @@ func main() {
 	}
 
 	grpcServer := grpc.NewServer()
-	logicpb.RegisterLogicServiceServer(grpcServer, service.NewLogicService(authLogic, matchLogic))
+	logicpb.RegisterLogicServiceServer(grpcServer, service.NewLogicService(authLogic, matchLogic, playerInfoLogic))
 
 	listener, err := net.Listen("tcp", cfg.LogicServer01.ListenAddr)
 	if err != nil {

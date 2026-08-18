@@ -31,8 +31,7 @@ message LoginReq {
 // RegisterReq 注册请求
 message RegisterReq {
   string email = 1; // 邮箱
-  reserved 2;
-  reserved "verification_code";
+
   string password = 3; // 密码
 }
 
@@ -82,3 +81,36 @@ message MatchRoomResp {
   string room_token = 9; // 入房令牌
   int64 expire_at = 10; // 过期时间戳，毫秒
 }
+
+//ModifyPlayerNicknameReq 修改玩家自己的昵称
+message ModifyPlayerNicknameReq {
+  string access_token = 1; //短token
+  string refresh_token = 2; //长期token
+  string player_Nickname = 3; //玩家想改的昵称
+}
+
+//ModifyPlayerNicknameResq 修改玩家自己的昵称响应
+message ModifyPlayerNicknameResp {
+  bool status = 1; //状态
+  string content = 2; //返回信息
+}
+
+// PlayerInfoReq 玩家账户信息请求
+message PlayerInfoReq {
+  string access_token = 1; //短token
+  string refresh_token = 2; //长期token
+}
+
+//PlayerInfoResq 玩家账户信息响应
+message PlayerInfoResq {
+  bool status = 1; //状态
+  string content = 2; //返回信息
+  string access_token = 3; //当前可用短token
+  string refresh_token = 4; //长期token
+  string player_Nickname = 5; //玩家昵称
+  string player_level = 6; //玩家等级
+  string player_id = 7; //玩家ID
+  uint64 player_coins = 8; //玩家货币数量
+  int32 player_profile_photo_id = 9; // 玩家头像id (头像都是服务端预设的几个图片，传入id就可以获得指定头像)
+}
+

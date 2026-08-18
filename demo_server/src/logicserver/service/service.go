@@ -12,13 +12,14 @@ import (
 // LogicService logicserver gRPC服务
 type LogicService struct {
 	logicpb.UnimplementedLogicServiceServer
-	auth  *logic.AuthLogic  // 认证业务逻辑
-	match *logic.MatchLogic // 匹配业务逻辑
+	auth       *logic.AuthLogic       // 认证业务逻辑
+	match      *logic.MatchLogic      // 匹配业务逻辑
+	playerInfo *logic.PlayerInfoLogic // 玩家信息业务逻辑
 }
 
 // NewLogicService 创建 logicserver gRPC服务
-func NewLogicService(auth *logic.AuthLogic, match *logic.MatchLogic) *LogicService {
-	return &LogicService{auth: auth, match: match}
+func NewLogicService(auth *logic.AuthLogic, match *logic.MatchLogic, playerInfo *logic.PlayerInfoLogic) *LogicService {
+	return &LogicService{auth: auth, match: match, playerInfo: playerInfo}
 }
 
 // Login 处理邮箱密码登录
@@ -84,6 +85,31 @@ func (s *LogicService) VerifyToken(ctx context.Context, req *logicpb.VerifyToken
 		return authFailure("verify token failed"), nil
 	}
 	return authSuccess("token verified", result), nil
+}
+
+// ModifyPlayerNickname 修改玩家昵称
+func (s *LogicService) ModifyPlayerNickname(ctx context.Context, req *logicpb.ModifyPlayerNicknameReq) (*logicpb.ModifyPlayerNicknameResp, error) {
+	var resp logicpb.ModifyPlayerNicknameResp
+	if s == nil || s.playerInfo == nil {
+		resp.Status = false
+		resp.Content = "server unavailable"
+		return &resp, nil
+	}
+	if req == nil {
+		resp.Status = false
+		resp.Content = "invalid request"
+		return &resp, nil
+	}
+
+	err := s.playerInfo.ModifyPlayerNickname(ctx, req.AccessToken, req.Player_Nickname)
+	if err != nil {
+		resp.Status = false
+		resp.Content = err.Error()
+		return &resp, nil
+	}
+	resp.Status = true
+	resp.Content = "nickname modified successfully"
+	return &resp, nil
 }
 
 // MatchRoom 处理客户端匹配请求

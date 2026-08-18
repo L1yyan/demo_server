@@ -124,6 +124,26 @@ func (r *UserRepo) FindByEmail(ctx context.Context, email string) (*User, error)
 	return &user, nil
 }
 
+// FindByUserID 根据业务用户ID查询登录用户
+func (r *UserRepo) FindByUserID(ctx context.Context, userID uint64) (*User, error) {
+	if err := r.validate(); err != nil {
+		return nil, err
+	}
+	if userID == 0 {
+		return nil, errors.New("user id is empty")
+	}
+
+	var user User
+	err := r.collection.FindOne(ctx, bson.M{"user_id": userID}).Decode(&user)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, ErrUserNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find user by user id: %w", err)
+	}
+	return &user, nil
+}
+
 // MongoClient 返回已初始化的 MongoDB 客户端
 func MongoClient() *mongo.Client {
 	return mongodb.Instance()
@@ -211,4 +231,24 @@ func isDuplicateKeyError(err error) bool {
 		return commandError.Code == 11000 || commandError.Code == 11001
 	}
 	return strings.Contains(err.Error(), "E11000")
+}
+
+// ModifyNickname 修改用户昵称
+func (r *UserRepo) ModifyNickname(ctx context.Context, userID uint64, nickname string) error {
+	if err := r.validate(); err != nil {
+		return err
+	}
+	// 按业务用户ID更新昵称，用户不存在时通过匹配数量返回明确错误
+	result, err := r.collection.UpdateOne(
+		ctx,
+		bson.M{"user_id": userID},
+		bson.M{"$set": bson.M{"nickname": nickname}},
+	)
+	if err != nil {
+		return fmt.Errorf("modify nickname: %w", err)
+	}
+	if result.MatchedCount == 0 {
+		return ErrUserNotFound
+	}
+	return nil
 }
