@@ -41,14 +41,29 @@ func (s *LogicService) Login(ctx context.Context, req *logicpb.LoginReq) (*logic
 	return authSuccess("login success", result), nil
 }
 
-// Register 处理注册请求，当前暂未实现
+// Register 处理邮箱密码注册
 func (s *LogicService) Register(ctx context.Context, req *logicpb.RegisterReq) (*logicpb.AuthResp, error) {
-	return authFailure("register not implemented"), nil
+	if s == nil || s.auth == nil {
+		return authFailure("server unavailable"), nil
+	}
+	if req == nil {
+		return authFailure("invalid login params"), nil
+	}
+
+	result, err := s.auth.Register(ctx, req.Email, req.Password)
+	if err != nil {
+		if errors.Is(err, logic.ErrInvalidLoginParams) || errors.Is(err, logic.ErrAccountAlreadyExist) {
+			return authFailure(err.Error()), nil
+		}
+		glog.Error(ctx, "register failed", glog.Err(err))
+		return authFailure("register failed"), nil
+	}
+	return authSuccess("register success", result), nil
 }
 
-// SendVerifyCode 处理验证码发送请求，当前暂未实现
+// SendVerifyCode 保留兼容，邮箱密码注册不再发送验证码
 func (s *LogicService) SendVerifyCode(ctx context.Context, req *logicpb.SendVerifyCodeReq) (*logicpb.SendVerifyCodeResp, error) {
-	return &logicpb.SendVerifyCodeResp{Status: false, Content: "send verify code not implemented"}, nil
+	return &logicpb.SendVerifyCodeResp{Status: false, Content: "verify code disabled"}, nil
 }
 
 // VerifyToken 校验登录 token
@@ -106,7 +121,7 @@ func (s *LogicService) MatchRoom(ctx context.Context, req *logicpb.MatchRoomReq)
 }
 
 // authSuccess 构造认证成功响应
-func authSuccess(content string, result *logic.LoginResult) *logicpb.AuthResp {
+func authSuccess(content string, result *logic.LoginRegisterResult) *logicpb.AuthResp {
 	resp := &logicpb.AuthResp{Status: true, Content: content}
 	if result != nil {
 		resp.AccessToken = result.AccessToken

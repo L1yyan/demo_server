@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"net/mail"
 	"strings"
 	"time"
@@ -18,15 +17,15 @@ import (
 const (
 	invalidLoginParamsMessage = "invalid login params"      // 登录参数错误提示
 	invalidCredentialMessage  = "invalid email or password" // 账号或密码错误提示
-	guestLoginPrefix          = "guest:"                    // 临时玩家登录前缀
-	guestLoginPassword        = "multiplayer-fps-guest"     // 临时玩家登录口令
-	maxGuestDisplayNameLength = 32                          // 临时玩家昵称最大长度
+	accountAlreadyExists      = "account already exists"    // 账号已存在提示
+	maxBcryptPasswordBytes    = 72                          // bcrypt有效密码最大字节数
 )
 
 var (
-	ErrInvalidLoginParams = errors.New(invalidLoginParamsMessage)
-	ErrInvalidCredential  = errors.New(invalidCredentialMessage)
-	ErrUnauthorized       = errors.New("unauthorized")
+	ErrInvalidLoginParams  = errors.New(invalidLoginParamsMessage)
+	ErrInvalidCredential   = errors.New(invalidCredentialMessage)
+	ErrAccountAlreadyExist = errors.New(accountAlreadyExists)
+	ErrUnauthorized        = errors.New("unauthorized")
 )
 
 // AuthLogic 认证业务逻辑
@@ -38,8 +37,8 @@ type AuthLogic struct {
 	refreshTTL time.Duration   // 长token存储时间
 }
 
-// LoginResult 登录结果
-type LoginResult struct {
+// LoginRegisterResult 登录注册结果
+type LoginRegisterResult struct {
 	UserID       uint64 // 用户ID
 	Email        string // 邮箱
 	AccessToken  string // 短token
@@ -63,21 +62,44 @@ func NewAuthLogic(users *repo.UserRepo, tokens *repo.TokenRepo, jwt *jwttool.JWT
 	return &AuthLogic{users: users, tokens: tokens, jwt: jwt, accessTTL: accessTTL, refreshTTL: refreshTTL}, nil
 }
 
-// Login 使用邮箱和密码登录
-func (l *AuthLogic) Login(ctx context.Context, email string, password string) (*LoginResult, error) {
+// Register 使用邮箱和密码注册账号
+func (l *AuthLogic) Register(ctx context.Context, email string, password string) (*LoginRegisterResult, error) {
 	if l == nil {
 		return nil, errors.New("auth logic is nil")
 	}
-	email = strings.TrimSpace(email)
+	email = normalizeLoginEmail(email)
 	password = strings.TrimSpace(password)
-	if displayName, ok := parseGuestLogin(email, password); ok {
-		return l.loginGuest(ctx, displayName)
-	}
-	if strings.HasPrefix(strings.ToLower(email), guestLoginPrefix) {
+	if !isValidEmail(email) || !isValidPassword(password) {
 		return nil, ErrInvalidLoginParams
 	}
-	email = strings.ToLower(email)
-	if !isValidEmail(email) || password == "" {
+
+	// 注册前先生成密码哈希，Mongo 只保存哈希后的密码
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, fmt.Errorf("hash password: %w", err)
+	}
+	user, err := l.users.CreateUser(ctx, email, string(passwordHash))
+	if errors.Is(err, repo.ErrUserAlreadyExists) {
+		return nil, ErrAccountAlreadyExist
+	}
+	if err != nil {
+		return nil, err
+	}
+	if user == nil || user.UserID == 0 || user.Email == "" {
+		return nil, errors.New("created user is invalid")
+	}
+
+	return l.issueLoginTokens(ctx, user.UserID, user.Email)
+}
+
+// Login 使用邮箱和密码登录
+func (l *AuthLogic) Login(ctx context.Context, email string, password string) (*LoginRegisterResult, error) {
+	if l == nil {
+		return nil, errors.New("auth logic is nil")
+	}
+	email = normalizeLoginEmail(email)
+	password = strings.TrimSpace(password)
+	if !isValidEmail(email) || !isValidPassword(password) {
 		return nil, ErrInvalidLoginParams
 	}
 
@@ -98,33 +120,11 @@ func (l *AuthLogic) Login(ctx context.Context, email string, password string) (*
 		return nil, ErrInvalidCredential
 	}
 
-	// 生成并保存登录 token，保证返回给客户端的 token 服务端可校验
-	accessToken, refreshToken, err := l.jwt.GenerateToken(user.UserID, user.Email)
-	if err != nil {
-		return nil, fmt.Errorf("generate token: %w", err)
-	}
-	if err := l.tokens.SaveLoginTokens(ctx, user.UserID, user.Email, accessToken, refreshToken, l.accessTTL, l.refreshTTL); err != nil {
-		return nil, err
-	}
-	return &LoginResult{UserID: user.UserID, Email: user.Email, AccessToken: accessToken, RefreshToken: refreshToken}, nil
-}
-
-// loginGuest 为当前 Multiplayer 客户端的昵称登录签发临时 token
-func (l *AuthLogic) loginGuest(ctx context.Context, displayName string) (*LoginResult, error) {
-	userID := guestPlayerID(displayName)
-	identity := guestIdentity(displayName)
-	accessToken, refreshToken, err := l.jwt.GenerateToken(userID, identity)
-	if err != nil {
-		return nil, fmt.Errorf("generate guest token: %w", err)
-	}
-	if err := l.tokens.SaveLoginTokens(ctx, userID, identity, accessToken, refreshToken, l.accessTTL, l.refreshTTL); err != nil {
-		return nil, err
-	}
-	return &LoginResult{UserID: userID, Email: identity, AccessToken: accessToken, RefreshToken: refreshToken}, nil
+	return l.issueLoginTokens(ctx, user.UserID, user.Email)
 }
 
 // VerifyToken 校验登录 token，必要时刷新短 token
-func (l *AuthLogic) VerifyToken(ctx context.Context, accessToken string, refreshToken string) (*LoginResult, error) {
+func (l *AuthLogic) VerifyToken(ctx context.Context, accessToken string, refreshToken string) (*LoginRegisterResult, error) {
 	if l == nil {
 		return nil, errors.New("auth logic is nil")
 	}
@@ -147,8 +147,25 @@ func (l *AuthLogic) VerifyToken(ctx context.Context, accessToken string, refresh
 	return l.refreshAccessToken(ctx, refreshToken)
 }
 
+// issueLoginTokens 为认证成功的用户签发并保存登录令牌
+func (l *AuthLogic) issueLoginTokens(ctx context.Context, userID uint64, email string) (*LoginRegisterResult, error) {
+	if userID == 0 || strings.TrimSpace(email) == "" {
+		return nil, ErrInvalidCredential
+	}
+
+	// 生成并保存登录 token，保证返回给客户端的 token 服务端可校验
+	accessToken, refreshToken, err := l.jwt.GenerateToken(userID, email)
+	if err != nil {
+		return nil, fmt.Errorf("generate token: %w", err)
+	}
+	if err := l.tokens.SaveLoginTokens(ctx, userID, email, accessToken, refreshToken, l.accessTTL, l.refreshTTL); err != nil {
+		return nil, err
+	}
+	return &LoginRegisterResult{UserID: userID, Email: email, AccessToken: accessToken, RefreshToken: refreshToken}, nil
+}
+
 // verifyActiveAccessToken 校验未过期短 token 是否仍在服务端有效
-func (l *AuthLogic) verifyActiveAccessToken(ctx context.Context, accessToken string, refreshToken string, userID uint64, email string) (*LoginResult, error) {
+func (l *AuthLogic) verifyActiveAccessToken(ctx context.Context, accessToken string, refreshToken string, userID uint64, email string) (*LoginRegisterResult, error) {
 	session, err := l.tokens.GetAccessSession(ctx, accessToken)
 	if err != nil {
 		return nil, ErrUnauthorized
@@ -162,11 +179,11 @@ func (l *AuthLogic) verifyActiveAccessToken(ctx context.Context, accessToken str
 	if refreshToken != "" && session.RefreshHash != repo.TokenHash(refreshToken) {
 		return nil, ErrUnauthorized
 	}
-	return &LoginResult{UserID: userID, Email: email, AccessToken: accessToken, RefreshToken: refreshToken}, nil
+	return &LoginRegisterResult{UserID: userID, Email: email, AccessToken: accessToken, RefreshToken: refreshToken}, nil
 }
 
 // refreshAccessToken 使用长 token 刷新短 token
-func (l *AuthLogic) refreshAccessToken(ctx context.Context, refreshToken string) (*LoginResult, error) {
+func (l *AuthLogic) refreshAccessToken(ctx context.Context, refreshToken string) (*LoginRegisterResult, error) {
 	session, err := l.tokens.GetRefreshSession(ctx, refreshToken)
 	if err != nil {
 		return nil, ErrUnauthorized
@@ -181,7 +198,12 @@ func (l *AuthLogic) refreshAccessToken(ctx context.Context, refreshToken string)
 	if err := l.tokens.SaveAccessToken(ctx, claims.UserID, claims.Email, newAccessToken, refreshToken, l.accessTTL); err != nil {
 		return nil, err
 	}
-	return &LoginResult{UserID: claims.UserID, Email: claims.Email, AccessToken: newAccessToken, RefreshToken: refreshToken}, nil
+	return &LoginRegisterResult{UserID: claims.UserID, Email: claims.Email, AccessToken: newAccessToken, RefreshToken: refreshToken}, nil
+}
+
+// normalizeLoginEmail 统一登录注册邮箱格式
+func normalizeLoginEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
 }
 
 // isValidEmail 校验邮箱格式
@@ -193,34 +215,7 @@ func isValidEmail(email string) bool {
 	return err == nil && address.Address == email
 }
 
-// parseGuestLogin 解析当前 Multiplayer 客户端使用的昵称登录请求
-func parseGuestLogin(identifier string, password string) (string, bool) {
-	identifier = strings.TrimSpace(identifier)
-	if !strings.HasPrefix(strings.ToLower(identifier), guestLoginPrefix) {
-		return "", false
-	}
-	if password != guestLoginPassword {
-		return "", false
-	}
-	displayName := strings.TrimSpace(identifier[len(guestLoginPrefix):])
-	if displayName == "" {
-		return "", false
-	}
-	runes := []rune(displayName)
-	if len(runes) > maxGuestDisplayNameLength {
-		displayName = string(runes[:maxGuestDisplayNameLength])
-	}
-	return displayName, true
-}
-
-// guestPlayerID 根据昵称生成稳定的临时玩家ID
-func guestPlayerID(displayName string) uint64 {
-	hasher := fnv.New64a()
-	_, _ = hasher.Write([]byte(guestIdentity(displayName)))
-	return hasher.Sum64() | (uint64(1) << 63)
-}
-
-// guestIdentity 生成写入 JWT 和 Redis 登录态的临时身份字符串
-func guestIdentity(displayName string) string {
-	return guestLoginPrefix + strings.TrimSpace(displayName)
+// isValidPassword 校验密码是否可用于 bcrypt
+func isValidPassword(password string) bool {
+	return password != "" && len([]byte(password)) <= maxBcryptPasswordBytes
 }

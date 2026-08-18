@@ -12,7 +12,7 @@ service LogicService {
   // Register 用户注册
   rpc Register(RegisterReq) returns (AuthResp);
 
-  // SendVerifyCode 发送邮箱验证码
+  // SendVerifyCode 保留兼容，注册不再使用验证码
   rpc SendVerifyCode(SendVerifyCodeReq) returns(SendVerifyCodeResp);
 
   // VerifyToken 校验登录令牌
@@ -31,7 +31,9 @@ message LoginReq {
 // RegisterReq 注册请求
 message RegisterReq {
   string email = 1; // 邮箱
-  string verification_code = 2; // 验证码
+  reserved 2;
+  reserved "verification_code";
+  string password = 3; // 密码
 }
 
 // AuthResp 认证响应

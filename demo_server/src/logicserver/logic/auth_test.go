@@ -2,37 +2,23 @@ package logic
 
 import "testing"
 
-// TestParseGuestLogin 验证 Multiplayer 临时玩家登录参数解析
-func TestParseGuestLogin(t *testing.T) {
-	displayName, ok := parseGuestLogin("guest:Player One", guestLoginPassword)
-	if !ok {
-		t.Fatalf("expected guest login to parse")
-	}
-	if displayName != "Player One" {
-		t.Fatalf("expected display name to be trimmed, got %q", displayName)
-	}
-
-	if _, ok := parseGuestLogin("guest:Player One", "wrong-password"); ok {
-		t.Fatalf("expected wrong guest password to fail")
-	}
-	if _, ok := parseGuestLogin("player@example.com", guestLoginPassword); ok {
-		t.Fatalf("expected normal email to skip guest parser")
+// TestNormalizeLoginEmail 验证登录注册邮箱会统一去空格和小写
+func TestNormalizeLoginEmail(t *testing.T) {
+	email := normalizeLoginEmail("  Player@Example.COM  ")
+	if email != "player@example.com" {
+		t.Fatalf("expected normalized email, got %q", email)
 	}
 }
 
-// TestGuestPlayerIDStable 验证同一昵称生成稳定且非零的临时玩家ID
-func TestGuestPlayerIDStable(t *testing.T) {
-	first := guestPlayerID("Player One")
-	second := guestPlayerID("Player One")
-	other := guestPlayerID("Player Two")
-
-	if first == 0 {
-		t.Fatalf("expected non-zero guest player id")
+// TestIsValidPassword 验证密码长度符合 bcrypt 限制
+func TestIsValidPassword(t *testing.T) {
+	if !isValidPassword("secret") {
+		t.Fatalf("expected normal password to be valid")
 	}
-	if first != second {
-		t.Fatalf("expected stable guest player id, got %d and %d", first, second)
+	if isValidPassword("") {
+		t.Fatalf("expected empty password to be invalid")
 	}
-	if first == other {
-		t.Fatalf("expected different names to produce different ids")
+	if isValidPassword("1234567890123456789012345678901234567890123456789012345678901234567890123") {
+		t.Fatalf("expected password longer than bcrypt limit to be invalid")
 	}
 }
