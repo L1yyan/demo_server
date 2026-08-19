@@ -123,8 +123,24 @@ message GetPlayerInfoResp {
   string refresh_token = 4; //长期token
   string player_Nickname = 5; //玩家昵称
   string player_level = 6; //玩家等级
-  uint64 player_experience = 7; // 玩家经验值
+  uint64 player_exp = 7; // 玩家经验值
   uint64 player_id = 8; //玩家ID
   uint64 player_coins = 9; //玩家货币数量
   int32 player_profile_photo_id = 10; // 玩家头像id (头像都是服务端预设的几个图片，传入id就可以获得指定头像)
+}
+
+//SettleUpGameRewardAndKdReq 结算对局奖励和落盘玩家击杀与死亡数量请求
+message SettleUpGameRewardAndKdReq {
+  string access_token = 1; //短token
+  string refresh_token = 2; //长期token
+  repeated uint64 player_ids = 3; //房间内所有玩家id数组
+  repeated int64 exp = 4; //对局获得的经验
+  repeated int64 coin = 5; //对局获得的金币
+  repeated int64 kill_count = 6; //对局击杀数量
+}
+
+//SettleUpGameRewardAndKdResp 结算对局奖励和落盘玩家击杀与死亡数量响应
+message SettleUpGameRewardAndKdResp {
+  bool status = 1; //状态
+  string content = 2; //返回信息
 }

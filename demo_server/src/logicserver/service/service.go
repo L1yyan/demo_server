@@ -134,10 +134,10 @@ func (s *LogicService) GetPlayerInfo(ctx context.Context, req *logicpb.GetPlayer
 	resp.Status = true
 	resp.Content = "player info retrieved successfully"
 	resp.PlayerId = userInfo.UserID
-	resp.PlayerExperience = userInfo.Experience
+	resp.PlayerExp = uint64(userInfo.Exp)
 	resp.PlayerLevel = userInfo.Level
 	resp.Player_Nickname = userInfo.Nickname
-	resp.PlayerCoins = userInfo.Coins
+	resp.PlayerCoins = uint64(userInfo.Coins)
 	resp.PlayerProfilePhotoId = userInfo.ProfilePhotoID
 	return &resp, nil
 }
@@ -199,6 +199,22 @@ func (s *LogicService) MatchRoom(ctx context.Context, req *logicpb.MatchRoomReq)
 		RoomToken:    result.RoomToken,
 		ExpireAt:     result.ExpireAt,
 	}, nil
+}
+
+// SettleUpRoom 结算房间 req里的expcoin的数组索引对应的是相同索引序号的playerids数组里的玩家收益
+func (s *LogicService) SettleUpRoom(ctx context.Context, req *logicpb.SettleUpGameRewardAndKdReq) (*logicpb.SettleUpGameRewardAndKdResp, error) {
+	var resp logicpb.SettleUpGameRewardAndKdResp
+	resp.Status = false
+	if s == nil || s.match == nil {
+		resp.Content = "server unavailable"
+		return &resp, nil
+	}
+	if req == nil {
+		resp.Content = "req is nil"
+		return &resp, nil
+	}
+	s.playerInfo.SettleUpRoom(ctx, req.PlayerIds, req.Exp, req.Coin, req.KillCount)
+	return &resp, nil
 }
 
 // authSuccess 构造认证成功响应

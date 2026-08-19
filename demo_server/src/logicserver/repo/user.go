@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -94,7 +95,7 @@ func (r *UserRepo) CreateUser(ctx context.Context, email string, passwordHash st
 			Email:          email,
 			Nickname:       fmt.Sprintf("Player%d", userID),
 			Level:          "1",
-			Experience:     0,
+			Exp:     0,
 			Coins:          10000,
 			ProfilePhotoID: 0,
 			PasswordHash:   passwordHash,
@@ -261,6 +262,7 @@ func (r *UserRepo) ModifyNickname(ctx context.Context, userID uint64, nickname s
 	return nil
 }
 
+// ModifyProfilePhoto 修改用户头像
 func (r *UserRepo) ModifyProfilePhoto(ctx context.Context, userID uint64, photoId int32) error {
 	if err := r.validate(); err != nil {
 		return err
@@ -278,4 +280,41 @@ func (r *UserRepo) ModifyProfilePhoto(ctx context.Context, userID uint64, photoI
 		return ErrUserNotFound
 	}
 	return nil
+}
+
+//AddPlayerExpLevelCoin 添加玩家经验/等级/货币
+func(r *UserRepo) AddPlayerExpLevelCoin(ctx context.Context, userID uint64, exp int64, coin int64, killCount int64) error {
+	if err := r.validate(); err != nil {
+		return err
+	}
+	userInfo, err := r.FindByUserID(ctx, uint64(userID))
+	if err != nil {
+		return err
+	}
+	curLv := judgePlayerLevel(userInfo.Exp + exp)
+		_, err = r.collection.UpdateOne(
+		ctx,
+		bson.M{"user_id": userID},
+		bson.M{"$inc": bson.M{
+			"exp": exp,
+			"coin": coin,
+			"kill_count": killCount, 
+			},
+		"$set": bson.M{
+			"level": curLv,
+		},
+		},
+	)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// judgePlayerLevel 根据玩家的经验值二分判断玩家等级 找到数组里第一个大于等于exp的索引，然后返回索引+1作为等级
+func judgePlayerLevel(exp int64) int {
+	idx := sort.Search(len(consts.Level), func(i int) bool {
+		return consts.Level[i] >= exp
+	})
+	return idx + 1
 }

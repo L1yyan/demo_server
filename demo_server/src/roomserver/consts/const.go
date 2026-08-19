@@ -5,14 +5,13 @@ type UserInfo struct {
 	Email          string `bson:"email"`            // 邮箱
 	Nickname       string `bson:"nickname"`         // 昵称
 	Level          string `bson:"level"`            // 等级
-	Exp            int64  `bson:"exp"`              // 经验值
-	Coins          int64  `bson:"coins"`            // 货币数量
-	KillCount      int64  `bson:"kill_count"`       //击杀数量
+	Exp            uint64 `bson:"exp"`              // 经验值
+	Coins          uint64 `bson:"coins"`            // 货币数量
 	ProfilePhotoID int32  `bson:"profile_photo_id"` // 头像ID
 	PasswordHash   string `bson:"password_hash"`    // 密码哈希
 }
 
-var Level = []int64{
+var Level = []int{
 	0,    // Level 1
 	500,  // Level 2
 	1500, // Level 3

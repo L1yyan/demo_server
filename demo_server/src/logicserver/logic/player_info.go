@@ -6,6 +6,9 @@ import (
 	"demo_server/src/logicserver/consts"
 	"demo_server/src/logicserver/repo"
 	"errors"
+	"fmt"
+
+	"github.com/hashicorp/go-multierror"
 )
 
 type PlayerInfoLogic struct {
@@ -96,3 +99,25 @@ func (p *PlayerInfoLogic) ModifyPlayerProfilePhoto(ctx context.Context, token st
 	}
 	return p.userRepo.ModifyProfilePhoto(ctx, userId, photoId)
 }
+
+// SettleUpRoom 结算房间
+func (p *PlayerInfoLogic) SettleUpRoom(ctx context.Context, playerIds []uint64, playersExp []int64, playersCoin []int64, playersKillCount []int64) error {
+	var result *multierror.Error
+	for i := 0; i < len(playerIds); i++ {
+		err := p.userRepo.AddPlayerExpLevelCoin(ctx, playerIds[i], playersExp[i], playersCoin[i], playersKillCount[i])
+		if err != nil {
+			err = fmt.Errorf("player %d Settle Up Room failed: %w", playerIds[i], err)
+			result = multierror.Append(result, err)
+		}
+	}
+	return result.ErrorOrNil()
+}
+
+//房间结算的时候再判升级
+// judgePlayerLevel 根据玩家的经验值二分判断玩家等级 找到数组里第一个大于等于exp的索引，然后返回索引+1作为等级
+// func (p *PlayerInfoLogic) judgePlayerLevel(exp int) int {
+// 	idx := sort.Search(len(consts.Level), func(i int) bool {
+// 		return consts.Level[i] >= exp
+// 	})
+// 	return idx + 1
+// }
