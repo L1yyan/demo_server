@@ -8,12 +8,14 @@ import (
 	"sync/atomic"
 	"time"
 
+	logicpb "demo_server/gen/logic"
 	roompb "demo_server/gen/room"
 	"demo_server/pkg/glog"
 	roomconfig "demo_server/src/roomserver/config"
 	"demo_server/src/roomserver/logic"
 	"demo_server/src/roomserver/physx"
 	"demo_server/src/roomserver/protocol"
+
 	"github.com/xtaci/kcp-go/v5"
 )
 
@@ -33,7 +35,7 @@ func NewServer(cfg roomconfig.Config) *Server {
 }
 
 // Start 启动 roomserver
-func (s *Server) Start(ctx context.Context) error {
+func (s *Server) Start(ctx context.Context, logicClient logicpb.LogicServiceClient) error {
 	if err := s.resolveMapCollisionMetadata(ctx); err != nil {
 		return err
 	}
@@ -44,7 +46,7 @@ func (s *Server) Start(ctx context.Context) error {
 	syncConfig := logic.SyncConfig{
 		MaxInputHoldTicks: s.cfg.MaxInputHoldTicks,
 	}
-	manager := logic.NewRoomManagerWithOptions(ctx, s.cfg.MaxRooms, s.cfg.MaxPlayersPerRoom, s.cfg.TickRate, s.cfg.SnapshotRate, syncConfig, s.cfg.DefaultMapID, s.cfg.PhysicsHash, s.cfg.GameDuration, logic.NewSimpleAOIFilter(), physicsFactory)
+	manager := logic.NewRoomManagerWithOptions(ctx, s.cfg.MaxRooms, s.cfg.MaxPlayersPerRoom, s.cfg.TickRate, s.cfg.SnapshotRate, syncConfig, s.cfg.DefaultMapID, s.cfg.PhysicsHash, s.cfg.GameDuration, logic.NewSimpleAOIFilter(), physicsFactory, logicClient)
 	listener, err := kcp.ListenWithOptions(s.cfg.ListenAddr, nil, 10, 3)
 	if err != nil {
 		return fmt.Errorf("listen kcp: %w", err)

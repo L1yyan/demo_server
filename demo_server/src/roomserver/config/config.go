@@ -20,6 +20,7 @@ const (
 
 // Config roomserver 运行配置
 type Config struct {
+	LogicServerAddr     string        `yaml:"logic_server_addr"`     //logic服addr
 	ServerID            string        `yaml:"server_id"`             // 服务唯一ID
 	ListenAddr          string        `yaml:"listen_addr"`           // KCP监听地址
 	TokenSecret         string        `yaml:"token_secret"`          // 入房令牌签名密钥
@@ -48,6 +49,7 @@ type Config struct {
 // DefaultConfig 返回 roomserver 默认配置
 func DefaultConfig() Config {
 	return Config{
+		LogicServerAddr:     "127.0.0.1:8080",
 		ServerID:            "room-01",
 		ListenAddr:          ":9001",
 		TokenSecret:         "room-token-secret",
@@ -77,6 +79,9 @@ func DefaultConfig() Config {
 // Normalize 补齐配置默认值
 func (c Config) Normalize() Config {
 	defaults := DefaultConfig()
+	if c.LogicServerAddr == "" {
+		c.LogicServerAddr = defaults.LogicServerAddr
+	}
 	if c.ServerID == "" {
 		c.ServerID = defaults.ServerID
 	}

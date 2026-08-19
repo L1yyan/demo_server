@@ -6,7 +6,9 @@ import (
 	"sync"
 	"time"
 
+	logicpb "demo_server/gen/logic"
 	roompb "demo_server/gen/room"
+	"demo_server/pkg/glog"
 )
 
 var (
@@ -34,20 +36,21 @@ type RoomManager struct {
 	gameDuration      time.Duration
 	aoi               AOIFilter
 	physicsFactory    PhysicsWorldFactory
+	logicClient       logicpb.LogicServiceClient
 }
 
-// NewRoomManager 创建房间管理器
-func NewRoomManager(ctx context.Context, maxRooms int, maxPlayersPerRoom int, tickRate int, snapshotRate int, aoi AOIFilter, physicsFactory PhysicsWorldFactory) *RoomManager {
-	return NewRoomManagerWithSync(ctx, maxRooms, maxPlayersPerRoom, tickRate, snapshotRate, SyncConfig{}, "", "", aoi, physicsFactory)
-}
+// // NewRoomManager 创建房间管理器
+// func NewRoomManager(ctx context.Context, maxRooms int, maxPlayersPerRoom int, tickRate int, snapshotRate int, aoi AOIFilter, physicsFactory PhysicsWorldFactory) *RoomManager {
+// 	return NewRoomManagerWithSync(ctx, maxRooms, maxPlayersPerRoom, tickRate, snapshotRate, SyncConfig{}, "", "", aoi, physicsFactory)
+// }
 
-// NewRoomManagerWithSync 创建带同步配置的房间管理器
-func NewRoomManagerWithSync(ctx context.Context, maxRooms int, maxPlayersPerRoom int, tickRate int, snapshotRate int, syncConfig SyncConfig, mapID string, physicsHash string, aoi AOIFilter, physicsFactory PhysicsWorldFactory) *RoomManager {
-	return NewRoomManagerWithOptions(ctx, maxRooms, maxPlayersPerRoom, tickRate, snapshotRate, syncConfig, mapID, physicsHash, defaultGameDuration, aoi, physicsFactory)
-}
+// // NewRoomManagerWithSync 创建带同步配置的房间管理器
+// func NewRoomManagerWithSync(ctx context.Context, maxRooms int, maxPlayersPerRoom int, tickRate int, snapshotRate int, syncConfig SyncConfig, mapID string, physicsHash string, aoi AOIFilter, physicsFactory PhysicsWorldFactory) *RoomManager {
+// 	return NewRoomManagerWithOptions(ctx, maxRooms, maxPlayersPerRoom, tickRate, snapshotRate, syncConfig, mapID, physicsHash, defaultGameDuration, aoi, physicsFactory)
+// }
 
 // NewRoomManagerWithOptions 创建带完整运行参数的房间管理器
-func NewRoomManagerWithOptions(ctx context.Context, maxRooms int, maxPlayersPerRoom int, tickRate int, snapshotRate int, syncConfig SyncConfig, mapID string, physicsHash string, gameDuration time.Duration, aoi AOIFilter, physicsFactory PhysicsWorldFactory) *RoomManager {
+func NewRoomManagerWithOptions(ctx context.Context, maxRooms int, maxPlayersPerRoom int, tickRate int, snapshotRate int, syncConfig SyncConfig, mapID string, physicsHash string, gameDuration time.Duration, aoi AOIFilter, physicsFactory PhysicsWorldFactory, logicClient logicpb.LogicServiceClient) *RoomManager {
 	if maxRooms <= 0 {
 		maxRooms = 1000
 	}
@@ -77,6 +80,7 @@ func NewRoomManagerWithOptions(ctx context.Context, maxRooms int, maxPlayersPerR
 		gameDuration:      gameDuration,
 		aoi:               aoi,
 		physicsFactory:    physicsFactory,
+		logicClient:       logicClient,
 	}
 }
 
@@ -218,10 +222,41 @@ func (m *RoomManager) finishRoom(room *Room, playerIDs []uint64) {
 	if m.rooms[room.ID()] == room {
 		delete(m.rooms, room.ID())
 	}
+
+	//结算对局到logicserver落地
+	//奖励先写死 按照击杀数量判定输赢,击杀多的获得500Exp 1000coin 击杀少的获得200Exp 300coin 平局算400Exp 800coin
+	//奖励要和playerid索引对应着写入
+	var req logicpb.SettleUpGameRewardAndKdReq
+
+	for playerID, roomID := range m.playerRooms {
+		req.PlayerIds = append(req.PlayerIds, playerID)
+		req.KillCount = append(req.KillCount, int64(m.rooms[roomID].players[playerID].KillCount))
+	}
+
+	if req.KillCount[0] > req.KillCount[1] {
+		req.Coin[0] = 500
+		req.Exp[0] = 1000
+		req.Coin[1] = 300
+		req.Exp[1] = 200
+	} else if req.KillCount[0] < req.KillCount[1] {
+		req.Coin[1] = 500
+		req.Exp[1] = 1000
+		req.Coin[0] = 300
+		req.Exp[0] = 200
+	} else {
+		req.Coin[0] = 800
+		req.Coin[1] = 800
+		req.Exp[0] = 400
+		req.Exp[1] = 400
+
+	}
+	_, err := m.logicClient.SettleUpGameRewardAndKd(m.ctx, &req)
+	glog.Error(m.ctx, "结算失败:", glog.String("room_id:", room.id), glog.String("err:", err.Error()))
 	for playerID, roomID := range m.playerRooms {
 		if roomID == room.ID() {
 			delete(m.playerRooms, playerID)
 		}
 	}
+
 	m.mu.Unlock()
 }

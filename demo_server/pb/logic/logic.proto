@@ -20,6 +20,18 @@ service LogicService {
 
   // MatchRoom 请求匹配房间
   rpc MatchRoom(MatchRoomReq) returns(MatchRoomResp);
+
+  //ModifyPlayerNickname 修改玩家自己的昵称
+  rpc ModifyPlayerNickname(ModifyPlayerNicknameReq) returns (ModifyPlayerNicknameResp);
+
+  //ModifyPlayerProfilePhoto 修改玩家自己的头像
+  rpc ModifyPlayerProfilePhoto(ModifyPlayerProfilePhotoReq) returns (ModifyPlayerProfilePhotoResp);
+
+  //GetPlayerInfo 获取玩家账户信息
+  rpc GetPlayerInfo(GetPlayerInfoReq) returns (GetPlayerInfoResp);
+
+  //SettleUpGameRewardAndKd 结算对局奖励和落盘玩家击杀与死亡数量
+  rpc SettleUpGameRewardAndKd(SettleUpGameRewardAndKdReq) returns (SettleUpGameRewardAndKdResp);
 }
 
 // LoginReq 登录请求
@@ -108,14 +120,14 @@ message ModifyPlayerProfilePhotoResp {
   string content = 2; //返回信息
 }
 
-// PlayerInfoReq 玩家账户信息请求
+//GetPlayerInfoReq 获取玩家账户信息请求
 message GetPlayerInfoReq {
   string access_token = 1; //短token
   string refresh_token = 2; //长期token
   uint64 player_id = 3; //想要查询信息的玩家id
 }
 
-//PlayerInfoResq 玩家账户信息响应
+//GetPlayerInfoResq 获取玩家账户信息响应
 message GetPlayerInfoResp {
   bool status = 1; //状态
   string content = 2; //返回信息

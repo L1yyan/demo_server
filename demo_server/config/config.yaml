@@ -53,6 +53,7 @@ match_server_01:
 
 #room_server
 room_server_01:
+  logic_server_addr: "127.0.0.1:8080"
   server_id: "room-01"
   listen_addr: "0.0.0.0:9001"
   token_secret: "room-token-secret"
