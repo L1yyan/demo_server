@@ -267,6 +267,31 @@ func (s *LogicService) BuyGun(ctx context.Context, req *logicpb.BuyGunReq) (*log
 	return &resp, nil
 }
 
+//GetPlayerWareDetails 获取玩家仓库信息 
+func (s *LogicService) GetPlayerWareDetails(ctx context.Context, req *logicpb.GetPlayerWareDetailsReq) (*logicpb.GetPlayerWareDetailsResp, error) {
+	var resp logicpb.GetPlayerWareDetailsResp
+	resp.Status = false
+	if s == nil || s.playerInfo == nil {
+		resp.Content = "server unvailable"
+		return &resp, nil
+	}
+	if req == nil {
+		resp.Content = "req is nil"
+		return &resp, nil
+	}
+	wareDetails, err := s.playerInfo.GetPlayerWareDetails(ctx, req.AccessToken, req.PlayerId)
+	if err != nil {
+		return &resp, err
+	}
+	resp.GunList = make([]*logicpb.GunDetails, 0)
+	for _, gun := range wareDetails.Gun {
+		resp.GunList = append(resp.GunList, &logicpb.GunDetails{Id: gun.Id, Price: gun.Price, Name: gun.Name})
+	}
+	resp.Status = true
+	resp.Content = "ok"
+	return &resp, nil
+}
+ 
 // authSuccess 构造认证成功响应
 func authSuccess(content string, result *logic.LoginRegisterResult) *logicpb.AuthResp {
 	resp := &logicpb.AuthResp{Status: true, Content: content}

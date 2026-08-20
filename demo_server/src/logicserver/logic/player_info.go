@@ -7,6 +7,7 @@ import (
 	"demo_server/src/logicserver/repo"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/hashicorp/go-multierror"
 )
@@ -113,3 +114,19 @@ func (p *PlayerInfoLogic) SettleUpRoom(ctx context.Context, playerIds []uint64, 
 	return result.ErrorOrNil()
 }
 
+// GetPlayerWareDetails 获取玩家仓库信息
+func (p *PlayerInfoLogic) GetPlayerWareDetails(ctx context.Context, token string, playerId uint64) (consts.UserWare, error) {
+	var nilUserWare consts.UserWare 
+	claims, ok, err := p.jwt.ParseToken(token)
+	if !ok {
+		return nilUserWare, fmt.Errorf("token过期了兄弟")
+	}
+	if err != nil {
+		return nilUserWare, err
+	}
+	tokenPlayerId := claims.Id
+	if playerId == 0 {
+		playerId, _ = strconv.ParseUint(tokenPlayerId, 10, 64)
+	}
+	return p.userRepo.GetPlayerWareDetails(ctx, playerId)
+}

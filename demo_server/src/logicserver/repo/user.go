@@ -342,6 +342,27 @@ func (r *UserRepo) BuyGunToPlayerWare(ctx context.Context, userID uint64, gunID 
 	return nil
 }
 
+// GetPlayerWareDetails 获取玩家仓库信息
+func (r *UserRepo) GetPlayerWareDetails(ctx context.Context, userID uint64) (consts.UserWare, error) {
+	var nilUserWare consts.UserWare
+	if err := r.validate(); err != nil {
+		return nilUserWare, err
+	}
+	filter := bson.M{"user_id": userID}
+	projection := bson.M{"gun": 1}
+
+	var user User
+
+	err := r.collection.FindOne(ctx, filter, options.FindOne().SetProjection(projection)).Decode(&user)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nilUserWare, errors.New("user not found")
+		}
+		return nilUserWare, err
+	}
+	return user.UserWare, nil
+}
+
 // judgePlayerLevel 根据玩家的经验值二分判断玩家等级 找到数组里第一个大于等于exp的索引，然后返回索引+1作为等级
 func judgePlayerLevel(exp int64) int {
 	idx := sort.Search(len(consts.Level), func(i int) bool {

@@ -13,7 +13,7 @@ type UserInfo struct {
 }
 
 type UserWare struct {
-	GunIds []int32 `bson:"gun_ids"`
+	Gun []Gun `bson:"gun"`
 }
 
 type Gun struct {
