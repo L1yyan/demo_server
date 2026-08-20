@@ -38,6 +38,12 @@ service LogicService {
 
   //BuyGun 购买武器
   rpc BuyGun(BuyGunReq) returns (BuyGunResp);
+
+  //EquipGun 装备武器
+  rpc EquipGun(EquipGunReq) returns (EquipGunResp);
+
+  //GetEquipGun 获取装备的武器
+  rpc GetEquipGun(GetEquipGunReq) returns (GetEquipGunResp);
 }
 
 // LoginReq 登录请求
@@ -161,6 +167,33 @@ message SettleUpGameRewardAndKdReq {
 message SettleUpGameRewardAndKdResp {
   bool status = 1; //状态
   string content = 2; //返回信息
+}
+
+//EquipGunReq 装备武器请求
+message EquipGunReq {
+  string access_token = 1; //短期token
+  string refresh_token = 2; //长期token
+  int32 gun_id = 3; //想要装备的武器id
+}
+
+//EquipGunResp 装备武器响应
+message EquipGunResp {
+  bool status = 1; //状态
+  string content = 2; //返回信息
+}
+
+//GetEquipGunReq 获取装备的武器请求
+message GetEquipGunReq {
+  string access_token = 1; //短期token
+  string refresh_token = 2; //长期token
+  uint64 player_id = 3; //玩家ID
+}
+
+//GetEquipGunResp 获取装备的武器响应
+message GetEquipGunResp {
+  bool status = 1; //状态
+  string content = 2; //返回信息
+  int32 gun_id = 3; //所持武器id 
 }
 
 //****商店相关****//

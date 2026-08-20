@@ -116,7 +116,7 @@ func (p *PlayerInfoLogic) SettleUpRoom(ctx context.Context, playerIds []uint64, 
 
 // GetPlayerWareDetails 获取玩家仓库信息
 func (p *PlayerInfoLogic) GetPlayerWareDetails(ctx context.Context, token string, playerId uint64) (consts.UserWare, error) {
-	var nilUserWare consts.UserWare 
+	var nilUserWare consts.UserWare
 	claims, ok, err := p.jwt.ParseToken(token)
 	if !ok {
 		return nilUserWare, fmt.Errorf("token过期了兄弟")
@@ -130,3 +130,34 @@ func (p *PlayerInfoLogic) GetPlayerWareDetails(ctx context.Context, token string
 	}
 	return p.userRepo.GetPlayerWareDetails(ctx, playerId)
 }
+
+// func (p *PlayerInfoLogic) GetPlayerEquipGun
+// EquipGun  仓库界面装备武器
+func (p *PlayerInfoLogic) EquipGun(ctx context.Context, token string, gunId int32) error {
+	claims, ok, err := p.jwt.ParseToken(token)
+	if !ok {
+		return fmt.Errorf("token过期了兄弟")
+	}
+	if err != nil {
+		return err
+	}
+	playerIdStr := claims.Id
+	playerId, _ := strconv.ParseUint(playerIdStr, 10, 64)
+	return p.userRepo.SetPlayerEquipGun(ctx, playerId, gunId)
+}
+
+// //SetPlayerEquipGun 设置玩家装备的武器
+// func (r *UserRepo) SetPlayerEquipGun(ctx context.Context, userID uint64, gunID int32) error {
+// 	if err := r.validate(); err != nil {
+// 		return err
+// 	}
+// 	result, err := r.collection.UpdateOne(ctx, bson.M{"user_id": userID}, bson.M{"$set":bson.M{"equip_gun": gunID}})
+// 	if err != nil {
+// 		return err
+// 	}
+
+// 	if result.MatchedCount == 0 {
+// 		return errors.New("update fail")
+// 	}
+// 	return nil
+// }

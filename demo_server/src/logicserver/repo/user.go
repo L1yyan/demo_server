@@ -363,6 +363,44 @@ func (r *UserRepo) GetPlayerWareDetails(ctx context.Context, userID uint64) (con
 	return user.UserWare, nil
 }
 
+// GetPlayerEquipGunById 通过PlayerId获取玩家装备的武器
+func (r *UserRepo) GetPlayerEquipGunId(ctx context.Context, userID uint64) (int32, error) {
+    if err := r.validate(); err != nil {
+        return 0, err
+    }
+
+    filter := bson.M{"user_id": userID}
+    projection := bson.M{"equip_gun": 1}
+
+    var result struct {
+        EquipGun int32 `bson:"equip_gun"`
+    }
+    err := r.collection.FindOne(ctx, filter, options.FindOne().SetProjection(projection)).Decode(&result)
+    if err != nil {
+        if errors.Is(err, mongo.ErrNoDocuments) {
+            return 0, errors.New("user not found")
+        }
+        return 0, err
+    }
+    return result.EquipGun, nil
+}
+
+//SetPlayerEquipGun 设置玩家装备的武器
+func (r *UserRepo) SetPlayerEquipGun(ctx context.Context, userID uint64, gunID int32) error {
+	if err := r.validate(); err != nil {
+		return err
+	}
+	result, err := r.collection.UpdateOne(ctx, bson.M{"user_id": userID}, bson.M{"$set":bson.M{"equip_gun": gunID}})
+	if err != nil {
+		return err
+	}
+
+	if result.MatchedCount == 0 {
+		return errors.New("update fail")
+	}
+	return nil
+}
+
 // judgePlayerLevel 根据玩家的经验值二分判断玩家等级 找到数组里第一个大于等于exp的索引，然后返回索引+1作为等级
 func judgePlayerLevel(exp int64) int {
 	idx := sort.Search(len(consts.Level), func(i int) bool {

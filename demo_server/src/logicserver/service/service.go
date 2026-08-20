@@ -267,7 +267,7 @@ func (s *LogicService) BuyGun(ctx context.Context, req *logicpb.BuyGunReq) (*log
 	return &resp, nil
 }
 
-//GetPlayerWareDetails 获取玩家仓库信息 
+// GetPlayerWareDetails 获取玩家仓库信息
 func (s *LogicService) GetPlayerWareDetails(ctx context.Context, req *logicpb.GetPlayerWareDetailsReq) (*logicpb.GetPlayerWareDetailsResp, error) {
 	var resp logicpb.GetPlayerWareDetailsResp
 	resp.Status = false
@@ -291,7 +291,29 @@ func (s *LogicService) GetPlayerWareDetails(ctx context.Context, req *logicpb.Ge
 	resp.Content = "ok"
 	return &resp, nil
 }
- 
+
+// EquipGun 装备武器
+func (s *LogicService) EquipGun(ctx context.Context, req *logicpb.EquipGunReq) (*logicpb.EquipGunResp, error) {
+	var resp logicpb.EquipGunResp
+	resp.Status = false
+	if s == nil || s.playerInfo == nil {
+		resp.Content = "server unvailable"
+		return &resp, nil
+	}
+	if req == nil {
+		resp.Content = "req is nil"
+		return &resp, nil
+	}
+	err := s.playerInfo.EquipGun(ctx, req.AccessToken, req.GunId)
+	if err != nil {
+		resp.Content = "equip fail"
+		return &resp, nil
+	}
+	resp.Status = true
+	resp.Content = "ok"
+	return &resp, nil
+}
+
 // authSuccess 构造认证成功响应
 func authSuccess(content string, result *logic.LoginRegisterResult) *logicpb.AuthResp {
 	resp := &logicpb.AuthResp{Status: true, Content: content}

@@ -6,6 +6,7 @@ type UserInfo struct {
 	Nickname       string `bson:"nickname"`         // 昵称
 	Level          string `bson:"level"`            // 等级
 	Exp            int64  `bson:"exp"`              // 经验值
+	EquipGun       int32  `bson:"equip_gun"`        //装备的武器
 	Coins          int64  `bson:"coins"`            // 货币数量
 	KillCount      int64  `bson:"kill_count"`       //击杀数量
 	ProfilePhotoID int32  `bson:"profile_photo_id"` // 头像ID
