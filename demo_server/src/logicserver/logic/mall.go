@@ -6,6 +6,7 @@ import (
 	"demo_server/src/logicserver/consts"
 	"demo_server/src/logicserver/repo"
 	"errors"
+	"strconv"
 )
 
 type MallLogic struct {
@@ -45,4 +46,23 @@ func (m *MallLogic) GetMallAllDetails(ctx context.Context) ([]consts.Gun, error)
 // GetGunPriceById 通过武器id获取武器价格
 func (m *MallLogic) GetGunPriceById(ctx context.Context, id int32) (int64, error) {
 	return m.mallRepo.GetGunPriceById(ctx, id)
+}
+
+// BuyGun 购买武器
+func (m *MallLogic) BuyGun(ctx context.Context, token string, gunId int32) error {
+	claims, ok, err := m.jwt.ParseToken(token)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("token过期了兄弟")
+	}
+	userIdStr := claims.Id
+	userId, _ := strconv.ParseUint(userIdStr, 10, 64)
+	price, err := m.mallRepo.GetGunPriceById(ctx, gunId)
+	err = m.userRepo.BuyGunToPlayerWare(ctx, userId, gunId, price)
+	if err != nil {
+		return err
+	}
+	return nil
 }

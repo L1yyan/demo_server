@@ -206,7 +206,7 @@ func (s *LogicService) MatchRoom(ctx context.Context, req *logicpb.MatchRoomReq)
 func (s *LogicService) SettleUpRoom(ctx context.Context, req *logicpb.SettleUpGameRewardAndKdReq) (*logicpb.SettleUpGameRewardAndKdResp, error) {
 	var resp logicpb.SettleUpGameRewardAndKdResp
 	resp.Status = false
-	if s == nil || s.match == nil {
+	if s == nil || s.playerInfo == nil {
 		resp.Content = "server unavailable"
 		return &resp, nil
 	}
@@ -223,7 +223,7 @@ func (s *LogicService) SettleUpRoom(ctx context.Context, req *logicpb.SettleUpGa
 func (s *LogicService) GetMallDetails(ctx context.Context, req *logicpb.GetMallDetailsReq) (*logicpb.GetMallDetailsResp, error) {
 	var resp logicpb.GetMallDetailsResp
 	resp.Status = false
-	if s == nil || s.match == nil {
+	if s == nil || s.mall == nil {
 		resp.Content = "server unavailable"
 		return &resp, nil
 	}
@@ -242,6 +242,28 @@ func (s *LogicService) GetMallDetails(ctx context.Context, req *logicpb.GetMallD
 	}
 	resp.GunList = list
 	resp.Status = true
+	return &resp, nil
+}
+
+// BuyGun 买东西
+func (s *LogicService) BuyGun(ctx context.Context, req *logicpb.BuyGunReq) (*logicpb.BuyGunResp, error) {
+	var resp logicpb.BuyGunResp
+	resp.Status = false
+	if s == nil || s.mall == nil {
+		resp.Content = "server unavailable"
+		return &resp, nil
+	}
+	if req == nil {
+		resp.Content = "req is nil"
+		return &resp, nil
+	}
+	err := s.mall.BuyGun(ctx, req.AccessToken, req.GunId)
+	if err != nil {
+		resp.Content = "Buy Gun Fail"
+		return &resp, err
+	}
+	resp.Status = true
+	resp.Content = "ok"
 	return &resp, nil
 }
 

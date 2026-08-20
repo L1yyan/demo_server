@@ -199,3 +199,16 @@ message BuyGunResp {
 }
 
 //****玩家仓库****//
+//GetPlayerWareDetailsReq 获取玩家仓库内容信息请求
+message GetPlayerWareDetailsReq {
+  string access_token = 1; //短token
+  string refresh_token = 2; //长期token
+  uint64 player_id = 3; //要查询仓库信息的玩家id,为0就是查询自己的,从token里解析出来
+}
+
+//GetMallDetailsResp 获取玩家仓库信息响应
+//GetPlayerWareDetailsResp {
+  bool status = 1; //状态
+  string content = 2; //返回信息
+  repeated GunDetails gun_list = 3; //枪械列表
+}

@@ -113,11 +113,3 @@ func (p *PlayerInfoLogic) SettleUpRoom(ctx context.Context, playerIds []uint64, 
 	return result.ErrorOrNil()
 }
 
-//房间结算的时候再判升级
-// judgePlayerLevel 根据玩家的经验值二分判断玩家等级 找到数组里第一个大于等于exp的索引，然后返回索引+1作为等级
-// func (p *PlayerInfoLogic) judgePlayerLevel(exp int) int {
-// 	idx := sort.Search(len(consts.Level), func(i int) bool {
-// 		return consts.Level[i] >= exp
-// 	})
-// 	return idx + 1
-// }

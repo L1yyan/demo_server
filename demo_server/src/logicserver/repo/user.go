@@ -312,6 +312,36 @@ func (r *UserRepo) AddPlayerExpLevelCoin(ctx context.Context, userID uint64, exp
 	return nil
 }
 
+// BuyGunToPlayerWare 购买武器并添加到玩家仓库
+func (r *UserRepo) BuyGunToPlayerWare(ctx context.Context, userID uint64, gunID int32, price int64) error {
+	if err := r.validate(); err != nil {
+		return err
+	}
+	filter := bson.M{
+		"user_id": userID,
+		"coin":    bson.M{"$gte": price},
+	}
+
+	update := bson.M{
+		"$inc": bson.M{
+			"coin": -price,
+		},
+		"$push": bson.M{
+			"gun_ids": gunID,
+		},
+	}
+
+	result, err := r.collection.UpdateOne(ctx, filter, update)
+	if err != nil {
+		return err
+	}
+
+	if result.MatchedCount == 0 {
+		return errors.New("update fail")
+	}
+	return nil
+}
+
 // judgePlayerLevel 根据玩家的经验值二分判断玩家等级 找到数组里第一个大于等于exp的索引，然后返回索引+1作为等级
 func judgePlayerLevel(exp int64) int {
 	idx := sort.Search(len(consts.Level), func(i int) bool {
