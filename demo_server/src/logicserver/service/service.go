@@ -15,11 +15,12 @@ type LogicService struct {
 	auth       *logic.AuthLogic       // 认证业务逻辑
 	match      *logic.MatchLogic      // 匹配业务逻辑
 	playerInfo *logic.PlayerInfoLogic // 玩家信息业务逻辑
+	mall       *logic.MallLogic       //商店逻辑
 }
 
 // NewLogicService 创建 logicserver gRPC服务
-func NewLogicService(auth *logic.AuthLogic, match *logic.MatchLogic, playerInfo *logic.PlayerInfoLogic) *LogicService {
-	return &LogicService{auth: auth, match: match, playerInfo: playerInfo}
+func NewLogicService(auth *logic.AuthLogic, match *logic.MatchLogic, playerInfo *logic.PlayerInfoLogic, mall *logic.MallLogic) *LogicService {
+	return &LogicService{auth: auth, match: match, playerInfo: playerInfo, mall: mall}
 }
 
 // Login 处理邮箱密码登录

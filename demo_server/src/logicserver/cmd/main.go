@@ -56,6 +56,15 @@ func main() {
 	if err != nil {
 		glog.Fatal(ctx, "create token repo failed", glog.Err(err))
 	}
+	mallRepo, err := repo.NewMallRepo(repo.MongoClient(), &cfg.LogicServer01.MongoDB)
+	if err != nil {
+		glog.Fatal(ctx, "create mall repo failed", glog.Err(err))
+	}
+	_ = mallRepo
+	mallLogic, err := logic.NewMallLogic(mallRepo, userRepo, tokenRepo, jwttool.Instance())
+	if err != nil {
+		glog.Fatal(ctx, "create mall logic failed", glog.Err(err))
+	}
 	authLogic, err := logic.NewAuthLogic(userRepo, tokenRepo, jwttool.Instance(), cfg.JWT.TokenExpire, cfg.JWT.RefreshExpire)
 	if err != nil {
 		glog.Fatal(ctx, "create auth logic failed", glog.Err(err))
@@ -76,7 +85,7 @@ func main() {
 	}
 
 	grpcServer := grpc.NewServer()
-	logicpb.RegisterLogicServiceServer(grpcServer, service.NewLogicService(authLogic, matchLogic, playerInfoLogic))
+	logicpb.RegisterLogicServiceServer(grpcServer, service.NewLogicService(authLogic, matchLogic, playerInfoLogic, mallLogic))
 
 	listener, err := net.Listen("tcp", cfg.LogicServer01.ListenAddr)
 	if err != nil {

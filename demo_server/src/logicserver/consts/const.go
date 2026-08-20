@@ -12,6 +12,10 @@ type UserInfo struct {
 	PasswordHash   string `bson:"password_hash"`    // 密码哈希
 }
 
+type UserWare struct {
+	GunIds []int32 `bson:"gun_ids"`
+}
+
 var Level = []int64{
 	0,    // Level 1
 	500,  // Level 2

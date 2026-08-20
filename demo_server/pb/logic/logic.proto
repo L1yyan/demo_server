@@ -32,6 +32,12 @@ service LogicService {
 
   //SettleUpGameRewardAndKd 结算对局奖励和落盘玩家击杀与死亡数量
   rpc SettleUpGameRewardAndKd(SettleUpGameRewardAndKdReq) returns (SettleUpGameRewardAndKdResp);
+
+  //GetMallDetails 获取商店列表信息
+  rpc GetMallDetails(GetMallDetailsReq) returns (GetMallDetailsResp);
+
+  //BuyGun 购买武器
+  rpc BuyGun(BuyGunReq) returns (BuyGunResp);
 }
 
 // LoginReq 登录请求
@@ -153,6 +159,34 @@ message SettleUpGameRewardAndKdReq {
 
 //SettleUpGameRewardAndKdResp 结算对局奖励和落盘玩家击杀与死亡数量响应
 message SettleUpGameRewardAndKdResp {
+  bool status = 1; //状态
+  string content = 2; //返回信息
+}
+
+//****商店相关****//
+
+//GetMallDetailsReq 获取商店列表信息请求
+message GetMallDetailsReq {
+  string access_token = 1; //短token
+  string refresh_token = 2; //长期token
+}
+
+//GetMallDetailsResp 获取商店列表信息响应
+message GetMallDetailsResp {
+  bool status = 1; //状态
+  string content = 2; //返回信息 
+  repeated int32 gun_ids = 3; //商店在售枪械列表
+}
+
+//BuyGunReq 购买武器请求
+message BuyGunReq {
+  string access_token = 1; //短token
+  string refresh_token = 2; //长token
+  int32 gun_id = 3; //想要购买的武器id
+}
+
+//BuyGunResp 购买武器响应
+message BuyGunResp {
   bool status = 1; //状态
   string content = 2; //返回信息
 }

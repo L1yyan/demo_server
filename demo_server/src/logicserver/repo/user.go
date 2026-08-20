@@ -35,6 +35,7 @@ var (
 type User struct {
 	ID       primitive.ObjectID `bson:"_id,omitempty"` // MongoDB文档ID
 	UserInfo consts.UserInfo    `bson:",inline"`       // 用户信息
+	UserWare consts.UserWare    `bson:",inline"`       // 用户仓库
 }
 
 // UserRepo 用户持久化仓库
@@ -95,7 +96,7 @@ func (r *UserRepo) CreateUser(ctx context.Context, email string, passwordHash st
 			Email:          email,
 			Nickname:       fmt.Sprintf("Player%d", userID),
 			Level:          "1",
-			Exp:     0,
+			Exp:            0,
 			Coins:          10000,
 			ProfilePhotoID: 0,
 			PasswordHash:   passwordHash,
@@ -282,8 +283,8 @@ func (r *UserRepo) ModifyProfilePhoto(ctx context.Context, userID uint64, photoI
 	return nil
 }
 
-//AddPlayerExpLevelCoin 添加玩家经验/等级/货币
-func(r *UserRepo) AddPlayerExpLevelCoin(ctx context.Context, userID uint64, exp int64, coin int64, killCount int64) error {
+// AddPlayerExpLevelCoin 添加玩家经验/等级/货币
+func (r *UserRepo) AddPlayerExpLevelCoin(ctx context.Context, userID uint64, exp int64, coin int64, killCount int64) error {
 	if err := r.validate(); err != nil {
 		return err
 	}
@@ -292,17 +293,17 @@ func(r *UserRepo) AddPlayerExpLevelCoin(ctx context.Context, userID uint64, exp 
 		return err
 	}
 	curLv := judgePlayerLevel(userInfo.Exp + exp)
-		_, err = r.collection.UpdateOne(
+	_, err = r.collection.UpdateOne(
 		ctx,
 		bson.M{"user_id": userID},
 		bson.M{"$inc": bson.M{
-			"exp": exp,
-			"coin": coin,
-			"kill_count": killCount, 
-			},
-		"$set": bson.M{
-			"level": curLv,
+			"exp":        exp,
+			"coin":       coin,
+			"kill_count": killCount,
 		},
+			"$set": bson.M{
+				"level": curLv,
+			},
 		},
 	)
 	if err != nil {
