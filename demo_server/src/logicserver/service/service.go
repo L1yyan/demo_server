@@ -215,6 +215,33 @@ func (s *LogicService) SettleUpRoom(ctx context.Context, req *logicpb.SettleUpGa
 		return &resp, nil
 	}
 	s.playerInfo.SettleUpRoom(ctx, req.PlayerIds, req.Exp, req.Coin, req.KillCount)
+	resp.Status = true
+	return &resp, nil
+}
+
+// GetMallDetails 获取商店列表信息
+func (s *LogicService) GetMallDetails(ctx context.Context, req *logicpb.GetMallDetailsReq) (*logicpb.GetMallDetailsResp, error) {
+	var resp logicpb.GetMallDetailsResp
+	resp.Status = false
+	if s == nil || s.match == nil {
+		resp.Content = "server unavailable"
+		return &resp, nil
+	}
+	if req == nil {
+		resp.Content = "req is nil"
+		return &resp, nil
+	}
+	gunList, err := s.mall.GetMallAllDetails(ctx)
+	if err != nil {
+		resp.Content = "GetmallAllDetails error"
+		return &resp, err
+	}
+	var list []*logicpb.GunDetails
+	for _, gun := range gunList {
+		list = append(list, &logicpb.GunDetails{Id: gun.Id, Price: gun.Price, Name: gun.Name})
+	}
+	resp.GunList = list
+	resp.Status = true
 	return &resp, nil
 }
 

@@ -16,6 +16,12 @@ type UserWare struct {
 	GunIds []int32 `bson:"gun_ids"`
 }
 
+type Gun struct {
+	Id    int32  `bson:"id"`    //武器id
+	Price int64  `bson:"price"` //武器价格
+	Name  string `bson:"name"`  //武器名字
+}
+
 var Level = []int64{
 	0,    // Level 1
 	500,  // Level 2

@@ -165,6 +165,13 @@ message SettleUpGameRewardAndKdResp {
 
 //****商店相关****//
 
+//GunDetails 武器商品详细信息
+message GunDetails {
+  int32 id = 1; //武器id
+  int64 price = 2; //武器价格
+  string name = 3; //武器名称
+}
+
 //GetMallDetailsReq 获取商店列表信息请求
 message GetMallDetailsReq {
   string access_token = 1; //短token
@@ -175,7 +182,7 @@ message GetMallDetailsReq {
 message GetMallDetailsResp {
   bool status = 1; //状态
   string content = 2; //返回信息 
-  repeated int32 gun_ids = 3; //商店在售枪械列表
+  repeated GunDetails gun_list = 3; //商店在售枪械列表
 }
 
 //BuyGunReq 购买武器请求
@@ -190,3 +197,5 @@ message BuyGunResp {
   bool status = 1; //状态
   string content = 2; //返回信息
 }
+
+//****玩家仓库****//
