@@ -207,7 +207,7 @@ message GetPlayerWareDetailsReq {
 }
 
 //GetMallDetailsResp 获取玩家仓库信息响应
-//GetPlayerWareDetailsResp {
+message GetPlayerWareDetailsResp {
   bool status = 1; //状态
   string content = 2; //返回信息
   repeated GunDetails gun_list = 3; //枪械列表
