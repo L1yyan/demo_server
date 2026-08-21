@@ -418,6 +418,7 @@ func (r *Room) buildJoinAck(status bool, player *Player, content string) *roompb
 		ack.Z = player.Z
 		ack.Yaw = player.Yaw
 		ack.Pitch = player.Pitch
+		ack.GunId = player.GunId
 	}
 	return ack
 }

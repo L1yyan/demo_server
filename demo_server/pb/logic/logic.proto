@@ -186,7 +186,7 @@ message EquipGunResp {
 message GetEquipGunReq {
   string access_token = 1; //短期token
   string refresh_token = 2; //长期token
-  uint64 player_id = 3; //玩家ID
+  uint64 player_id = 3; //玩家id
 }
 
 //GetEquipGunResp 获取装备的武器响应

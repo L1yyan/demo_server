@@ -146,6 +146,11 @@ func (p *PlayerInfoLogic) EquipGun(ctx context.Context, token string, gunId int3
 	return p.userRepo.SetPlayerEquipGun(ctx, playerId, gunId)
 }
 
+// GetEquipGun 获取装备的武器
+func (p *PlayerInfoLogic) GetEquipGun(ctx context.Context, playerId uint64) (int32, error) {
+	return p.userRepo.GetPlayerEquipGunId(ctx, playerId)
+}
+
 // //SetPlayerEquipGun 设置玩家装备的武器
 // func (r *UserRepo) SetPlayerEquipGun(ctx context.Context, userID uint64, gunID int32) error {
 // 	if err := r.validate(); err != nil {

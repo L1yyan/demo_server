@@ -12,6 +12,7 @@ type Vector3 struct {
 	Z float64 // Z轴
 }
 
+// TODO: 加个equip_id字段
 // Player 房间内玩家状态
 type Player struct {
 	ID                  uint64  // 玩家ID
@@ -30,6 +31,7 @@ type Player struct {
 	InvincibleUntilTick int64   // 无敌结束帧号
 	VerticalVelocity    float64 // 垂直速度
 	Grounded            bool    // 是否处于地面
+	GunId               int32   //手持武器id
 }
 
 // Session logic 层依赖的连接抽象

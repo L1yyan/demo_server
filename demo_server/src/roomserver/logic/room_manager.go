@@ -86,9 +86,18 @@ func NewRoomManagerWithOptions(ctx context.Context, maxRooms int, maxPlayersPerR
 
 // JoinRoom 加入房间，不存在时自动创建房间
 func (m *RoomManager) JoinRoom(roomID string, player *Player) error {
+
+	//TODO:这里获取equip_gun id 绑到Player上
 	if player == nil {
 		return errors.New("player is nil")
 	}
+	var req logicpb.GetEquipGunReq
+	req.PlayerId = player.ID
+	resp, err := m.logicClient.GetEquipGun(context.Background(), &req)
+	if err != nil {
+		return err
+	}
+	player.GunId = resp.GunId
 	room, err := m.getOrCreateRoom(roomID)
 	if err != nil {
 		return err

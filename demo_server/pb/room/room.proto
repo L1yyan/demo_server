@@ -44,6 +44,7 @@ message JoinRoomResp {
   bool game_started = 24; // 是否已开始对局
   int64 game_start_tick = 25; // 对局开始帧号
   int64 game_end_tick = 26; // 对局结束帧号
+  int32 gun_id = 27; //装备额武器id
 }
 
 // Heartbeat 心跳消息

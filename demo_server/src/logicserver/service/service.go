@@ -314,6 +314,29 @@ func (s *LogicService) EquipGun(ctx context.Context, req *logicpb.EquipGunReq) (
 	return &resp, nil
 }
 
+// GetEquipGun 获取装备武器id
+func (s *LogicService) GetEquipGun(ctx context.Context, req *logicpb.GetEquipGunReq) (*logicpb.GetEquipGunResp, error) {
+	var resp logicpb.GetEquipGunResp
+	resp.Status = false
+	if s == nil || s.playerInfo == nil {
+		resp.Content = "server unvailable"
+		return &resp, nil
+	}
+	if req == nil {
+		resp.Content = "req is nil"
+		return &resp, nil
+	}
+	gunId, err := s.playerInfo.GetEquipGun(ctx, req.PlayerId)
+	if err != nil {
+		resp.Content = "equip fail"
+		return &resp, nil
+	}
+	resp.Status = true
+	resp.GunId = gunId
+	resp.Content = "ok"
+	return &resp, nil
+}
+
 // authSuccess 构造认证成功响应
 func authSuccess(content string, result *logic.LoginRegisterResult) *logicpb.AuthResp {
 	resp := &logicpb.AuthResp{Status: true, Content: content}
