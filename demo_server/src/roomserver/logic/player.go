@@ -70,6 +70,7 @@ func (p *Player) ToStateAt(serverTick int64) *roompb.PlayerState {
 		DeathCount:          int32(p.DeathCount),
 		Invincible:          p.IsInvincible(serverTick),
 		InvincibleUntilTick: p.InvincibleUntilTick,
+		GunId:               p.GunId,
 	}
 }
 

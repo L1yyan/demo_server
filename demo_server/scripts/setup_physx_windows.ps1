@@ -87,7 +87,7 @@ if (-not (Test-Path $SolutionPath)) {
 }
 
 Write-Host "[physx] building PhysX core libraries: $BuildType"
-& cmake --build $CompilerDir --config $BuildType --parallel --target PhysX PhysXExtensions PhysXPvdSDK PhysXCommon PhysXCooking PhysXFoundation
+& cmake --build $CompilerDir --config $BuildType --parallel --target PhysX PhysXExtensions PhysXCharacterKinematic PhysXPvdSDK PhysXCommon PhysXCooking PhysXFoundation
 if ($LASTEXITCODE -ne 0) {
     throw "PhysX build failed: $LASTEXITCODE"
 }

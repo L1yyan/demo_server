@@ -1,0 +1,3 @@
+C:/Users/liyan1/codes/demo_server/demo_server/demo_server/build/windows/physx_bridge/CMakeFiles/physx_bridge.dir
+C:/Users/liyan1/codes/demo_server/demo_server/demo_server/build/windows/physx_bridge/CMakeFiles/ALL_BUILD.dir
+C:/Users/liyan1/codes/demo_server/demo_server/demo_server/build/windows/physx_bridge/CMakeFiles/ZERO_CHECK.dir

@@ -95,12 +95,14 @@ func (r *UserRepo) CreateUser(ctx context.Context, email string, passwordHash st
 			UserID:         userID,
 			Email:          email,
 			Nickname:       fmt.Sprintf("Player%d", userID),
-			Level:          "1",
+			Level:          1,
 			Exp:            0,
-			Coins:          10000,
+			Coins:          2000,
 			ProfilePhotoID: 0,
 			PasswordHash:   passwordHash,
 		},
+		// 显式初始化为空切片，避免序列化成 null 导致后续 $push 失败
+		UserWare: consts.UserWare{Gun: []consts.Gun{}},
 	}
 	if _, err := r.collection.InsertOne(ctx, user); err != nil {
 		if isDuplicateKeyError(err) {
@@ -298,7 +300,7 @@ func (r *UserRepo) AddPlayerExpLevelCoin(ctx context.Context, userID uint64, exp
 		bson.M{"user_id": userID},
 		bson.M{"$inc": bson.M{
 			"exp":        exp,
-			"coin":       coin,
+			"coins":      coin,
 			"kill_count": killCount,
 		},
 			"$set": bson.M{
@@ -312,34 +314,58 @@ func (r *UserRepo) AddPlayerExpLevelCoin(ctx context.Context, userID uint64, exp
 	return nil
 }
 
-// BuyGunToPlayerWare 购买武器并添加到玩家仓库
-func (r *UserRepo) BuyGunToPlayerWare(ctx context.Context, userID uint64, gunID int32, price int64) error {
+// BuyGunToPlayerWare 购买武器并添加到玩家仓库。
+// 依赖 Mongo 的 filter 原子完成金币余额校验和重复购买校验：
+//   - coins >= price 保证余额足够
+//   - gun.id != gunID 保证未拥有该武器
+//
+// 更新失败时再查询一次用户，给出具体失败原因
+func (r *UserRepo) BuyGunToPlayerWare(ctx context.Context, userID uint64, gun consts.Gun) error {
 	if err := r.validate(); err != nil {
 		return err
 	}
+	// 金币余额字段为 coins，武器仓库字段为 gun（[]Gun），同时拦截已拥有该武器的情况
 	filter := bson.M{
 		"user_id": userID,
-		"coin":    bson.M{"$gte": price},
+		"coins":   bson.M{"$gte": gun.Price},
+		"gun.id":  bson.M{"$ne": gun.Id},
 	}
 
-	update := bson.M{
-		"$inc": bson.M{
-			"coin": -price,
-		},
-		"$push": bson.M{
-			"gun_ids": gunID,
-		},
+	// 使用 aggregation pipeline 写入：历史文档中 gun 可能为 null 或不存在，
+	// 直接 $push 会报 "must be an array but is of type null"，
+	// 这里用 $ifNull 兜底为空数组再 $concatArrays 追加
+	update := mongo.Pipeline{
+		bson.D{{Key: "$set", Value: bson.D{
+			{Key: "coins", Value: bson.D{{Key: "$subtract", Value: []interface{}{"$coins", gun.Price}}}},
+			{Key: "gun", Value: bson.D{{Key: "$concatArrays", Value: []interface{}{
+				bson.D{{Key: "$ifNull", Value: []interface{}{"$gun", []interface{}{}}}},
+				[]interface{}{gun},
+			}}}},
+		}}},
 	}
 
 	result, err := r.collection.UpdateOne(ctx, filter, update)
 	if err != nil {
-		return err
+		return fmt.Errorf("buy gun: %w", err)
+	}
+	if result.MatchedCount > 0 {
+		return nil
 	}
 
-	if result.MatchedCount == 0 {
-		return errors.New("update fail")
+	// 更新未命中，向调用方返回明确原因，便于客户端提示
+	var user User
+	err = r.collection.FindOne(ctx, bson.M{"user_id": userID}).Decode(&user)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return ErrUserNotFound
 	}
-	return nil
+	if err != nil {
+		return fmt.Errorf("buy gun: query user: %w", err)
+	}
+	if user.UserInfo.Coins < gun.Price {
+		return errors.New("金币不足")
+	}
+	// 金币足够但仍未命中，说明 gun.id $ne 条件不满足，即已拥有该武器
+	return errors.New("已拥有该武器")
 }
 
 // GetPlayerWareDetails 获取玩家仓库信息
@@ -365,32 +391,32 @@ func (r *UserRepo) GetPlayerWareDetails(ctx context.Context, userID uint64) (con
 
 // GetPlayerEquipGunById 通过PlayerId获取玩家装备的武器
 func (r *UserRepo) GetPlayerEquipGunId(ctx context.Context, userID uint64) (int32, error) {
-    if err := r.validate(); err != nil {
-        return 0, err
-    }
+	if err := r.validate(); err != nil {
+		return 0, err
+	}
 
-    filter := bson.M{"user_id": userID}
-    projection := bson.M{"equip_gun": 1}
+	filter := bson.M{"user_id": userID}
+	projection := bson.M{"equip_gun": 1}
 
-    var result struct {
-        EquipGun int32 `bson:"equip_gun"`
-    }
-    err := r.collection.FindOne(ctx, filter, options.FindOne().SetProjection(projection)).Decode(&result)
-    if err != nil {
-        if errors.Is(err, mongo.ErrNoDocuments) {
-            return 0, errors.New("user not found")
-        }
-        return 0, err
-    }
-    return result.EquipGun, nil
+	var result struct {
+		EquipGun int32 `bson:"equip_gun"`
+	}
+	err := r.collection.FindOne(ctx, filter, options.FindOne().SetProjection(projection)).Decode(&result)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return 0, errors.New("user not found")
+		}
+		return 0, err
+	}
+	return result.EquipGun, nil
 }
 
-//SetPlayerEquipGun 设置玩家装备的武器
+// SetPlayerEquipGun 设置玩家装备的武器
 func (r *UserRepo) SetPlayerEquipGun(ctx context.Context, userID uint64, gunID int32) error {
 	if err := r.validate(); err != nil {
 		return err
 	}
-	result, err := r.collection.UpdateOne(ctx, bson.M{"user_id": userID}, bson.M{"$set":bson.M{"equip_gun": gunID}})
+	result, err := r.collection.UpdateOne(ctx, bson.M{"user_id": userID}, bson.M{"$set": bson.M{"equip_gun": gunID}})
 	if err != nil {
 		return err
 	}

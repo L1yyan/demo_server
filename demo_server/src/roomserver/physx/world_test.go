@@ -110,6 +110,41 @@ func TestWorldSetGetPlayerPosition(t *testing.T) {
 	if math.Abs(position.X-2) > testFloatTolerance || math.Abs(position.Y-0.2) > testFloatTolerance || math.Abs(position.Z+3) > testFloatTolerance {
 		t.Fatalf("unexpected player position: %+v", position)
 	}
+
+	// 传送后代理 actor 也应同步更新，射线只能命中新位置
+	hit, err := world.Raycast(logic.RaycastRequest{
+		Origin:      logic.Vector3{X: 2, Y: 1, Z: -8},
+		Direction:   logic.Vector3{Z: 1},
+		MaxDistance: 10,
+	})
+	if err != nil {
+		t.Fatalf("raycast teleported player: %v", err)
+	}
+	if !hit.Hit || hit.TargetID != 1 {
+		t.Fatalf("expected raycast to hit teleported player, got %+v", hit)
+	}
+
+	oldPositionHit, err := world.Raycast(logic.RaycastRequest{
+		Origin: logic.Vector3{Y: 1, Z: -8}, Direction: logic.Vector3{Z: 1}, MaxDistance: 10,
+	})
+	if err != nil {
+		t.Fatalf("raycast old player position: %v", err)
+	}
+	if oldPositionHit.Hit {
+		t.Fatalf("expected old player position to be empty, got %+v", oldPositionHit)
+	}
+
+	// 批量射线应保持输入顺序，并命中新位置的同一个玩家
+	hits, err := world.BatchRaycast([]logic.RaycastRequest{
+		{Origin: logic.Vector3{X: 2, Y: 1, Z: -8}, Direction: logic.Vector3{Z: 1}, MaxDistance: 10},
+		{Origin: logic.Vector3{X: 2, Y: 1, Z: -8}, Direction: logic.Vector3{Z: 1}, MaxDistance: 10, IgnorePlayerID: 1},
+	})
+	if err != nil {
+		t.Fatalf("batch raycast teleported player: %v", err)
+	}
+	if len(hits) != 2 || !hits[0].Hit || hits[0].TargetID != 1 || hits[1].Hit {
+		t.Fatalf("unexpected batch raycast results: %+v", hits)
+	}
 }
 
 // TestWorldRemovePlayer 验证移除玩家后 actor 不再被 raycast 命中
@@ -247,6 +282,20 @@ func TestWorldCreateMultipleRooms(t *testing.T) {
 	}
 	if err := secondWorld.AddPlayer(2, logic.Vector3{X: 0, Y: 0, Z: 0}); err != nil {
 		t.Fatalf("add second world player: %v", err)
+	}
+
+	// 两个 world 即使坐标和玩家 ID 相同，也只能查询到各自 scene 中的玩家
+	firstHit, err := firstWorld.Raycast(logic.RaycastRequest{
+		Origin: logic.Vector3{X: 0, Y: 1, Z: -5}, Direction: logic.Vector3{Z: 1}, MaxDistance: 10,
+	})
+	if err != nil || !firstHit.Hit || firstHit.TargetID != 1 {
+		t.Fatalf("unexpected first world hit: %+v, err=%v", firstHit, err)
+	}
+	secondHit, err := secondWorld.Raycast(logic.RaycastRequest{
+		Origin: logic.Vector3{X: 0, Y: 1, Z: -5}, Direction: logic.Vector3{Z: 1}, MaxDistance: 10,
+	})
+	if err != nil || !secondHit.Hit || secondHit.TargetID != 2 {
+		t.Fatalf("unexpected second world hit: %+v, err=%v", secondHit, err)
 	}
 }
 

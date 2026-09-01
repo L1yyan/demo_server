@@ -206,7 +206,7 @@ func (w *World) RemovePlayer(playerID uint64) error {
 	if w.ptr == nil {
 		return logic.ErrPhysicsWorldClosed
 	}
-	// 玩家离开房间时同步移除 C++ 侧 actor，避免 scene 中残留胶囊体
+	// 玩家离开房间时同步移除 C++ 侧 CCT，避免 scene 中残留玩家代理体
 	errBuf := newCErrorBuffer()
 	defer C.free(unsafe.Pointer(errBuf))
 
@@ -217,7 +217,7 @@ func (w *World) RemovePlayer(playerID uint64) error {
 	return nil
 }
 
-// MovePlayer 通过 PhysX sweep 推进玩家位置
+// MovePlayer 通过 PhysX CCT collide-and-slide 推进玩家位置
 func (w *World) MovePlayer(req logic.MovePlayerRequest) (logic.MovePlayerResult, error) {
 	if w.ptr == nil {
 		return logic.MovePlayerResult{}, logic.ErrPhysicsWorldClosed

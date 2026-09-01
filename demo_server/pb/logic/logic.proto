@@ -44,7 +44,12 @@ service LogicService {
 
   //GetEquipGun 获取装备的武器
   rpc GetEquipGun(GetEquipGunReq) returns (GetEquipGunResp);
+
+  
+  //GetPlayerWareDetails 获取玩家仓库信息
+  rpc GetPlayerWareDetails(GetPlayerWareDetailsReq) returns (GetPlayerWareDetailsResp);
 }
+
 
 // LoginReq 登录请求
 message LoginReq {
@@ -186,7 +191,7 @@ message EquipGunResp {
 message GetEquipGunReq {
   string access_token = 1; //短期token
   string refresh_token = 2; //长期token
-  uint64 player_id = 3; //玩家id
+  uint64 player_id = 3; //玩家id,为0则从token解析自身id查询
 }
 
 //GetEquipGunResp 获取装备的武器响应

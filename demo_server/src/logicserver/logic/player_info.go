@@ -7,7 +7,6 @@ import (
 	"demo_server/src/logicserver/repo"
 	"errors"
 	"fmt"
-	"strconv"
 
 	"github.com/hashicorp/go-multierror"
 )
@@ -41,12 +40,13 @@ func (p *PlayerInfoLogic) ModifyPlayerNickname(ctx context.Context, token string
 	if nickname == "" {
 		return errors.New("nickname is empty")
 	}
-	claims, ok, err := p.jwt.ParseToken(token)
+	// 解析令牌，expired 为 true 表示令牌已过期
+	claims, expired, err := p.jwt.ParseToken(token)
 	if err != nil {
+		if expired {
+			return errors.New("token过期了兄弟")
+		}
 		return err
-	}
-	if !ok {
-		return errors.New("invalid token")
 	}
 	userId := claims.UserID
 	_, err = p.userRepo.FindByUserID(ctx, userId)
@@ -63,19 +63,18 @@ func (p *PlayerInfoLogic) GetPlayerInfo(ctx context.Context, token string, playe
 	if token == "" {
 		return consts.UserInfo{}, errors.New("token is empty")
 	}
-	claims, ok, err := p.jwt.ParseToken(token)
+	claims, expired, err := p.jwt.ParseToken(token)
 	if err != nil {
+		if expired {
+			return consts.UserInfo{}, errors.New("token过期了兄弟")
+		}
 		return consts.UserInfo{}, err
-	}
-	if !ok {
-		return consts.UserInfo{}, errors.New("invalid token")
 	}
 	userId := claims.UserID
 	if playerId != 0 {
 		return p.userRepo.FindByUserID(ctx, playerId)
-	} else {
-		return p.userRepo.FindByUserID(ctx, userId)
 	}
+	return p.userRepo.FindByUserID(ctx, userId)
 }
 
 // Modifyplayerprofilephoto 修改玩家头像
@@ -86,12 +85,12 @@ func (p *PlayerInfoLogic) ModifyPlayerProfilePhoto(ctx context.Context, token st
 	if token == "" {
 		return errors.New("token is empty")
 	}
-	claims, ok, err := p.jwt.ParseToken(token)
+	claims, expired, err := p.jwt.ParseToken(token)
 	if err != nil {
+		if expired {
+			return errors.New("token过期了兄弟")
+		}
 		return err
-	}
-	if !ok {
-		return errors.New("invalid token")
 	}
 	userId := claims.UserID
 	_, err = p.userRepo.FindByUserID(ctx, userId)
@@ -117,16 +116,16 @@ func (p *PlayerInfoLogic) SettleUpRoom(ctx context.Context, playerIds []uint64, 
 // GetPlayerWareDetails 获取玩家仓库信息
 func (p *PlayerInfoLogic) GetPlayerWareDetails(ctx context.Context, token string, playerId uint64) (consts.UserWare, error) {
 	var nilUserWare consts.UserWare
-	claims, ok, err := p.jwt.ParseToken(token)
-	if !ok {
-		return nilUserWare, fmt.Errorf("token过期了兄弟")
-	}
+	// 解析令牌，expired 为 true 表示令牌已过期
+	claims, expired, err := p.jwt.ParseToken(token)
 	if err != nil {
+		if expired {
+			return nilUserWare, errors.New("token过期了兄弟")
+		}
 		return nilUserWare, err
 	}
-	tokenPlayerId := claims.Id
 	if playerId == 0 {
-		playerId, _ = strconv.ParseUint(tokenPlayerId, 10, 64)
+		playerId = claims.UserID
 	}
 	return p.userRepo.GetPlayerWareDetails(ctx, playerId)
 }
@@ -134,20 +133,36 @@ func (p *PlayerInfoLogic) GetPlayerWareDetails(ctx context.Context, token string
 // func (p *PlayerInfoLogic) GetPlayerEquipGun
 // EquipGun  仓库界面装备武器
 func (p *PlayerInfoLogic) EquipGun(ctx context.Context, token string, gunId int32) error {
-	claims, ok, err := p.jwt.ParseToken(token)
-	if !ok {
-		return fmt.Errorf("token过期了兄弟")
-	}
+	claims, expired, err := p.jwt.ParseToken(token)
 	if err != nil {
+		if expired {
+			return errors.New("token过期了兄弟")
+		}
 		return err
 	}
-	playerIdStr := claims.Id
-	playerId, _ := strconv.ParseUint(playerIdStr, 10, 64)
-	return p.userRepo.SetPlayerEquipGun(ctx, playerId, gunId)
+	return p.userRepo.SetPlayerEquipGun(ctx, claims.UserID, gunId)
 }
 
-// GetEquipGun 获取装备的武器
-func (p *PlayerInfoLogic) GetEquipGun(ctx context.Context, playerId uint64) (int32, error) {
+// GetEquipGun 获取装备的武器。
+// playerId 为 0 时视为查询自己，从 token 解析用户ID；非 0 时直接按传入ID查询（供内部服务调用）
+func (p *PlayerInfoLogic) GetEquipGun(ctx context.Context, token string, playerId uint64) (int32, error) {
+	if p == nil || p.userRepo == nil {
+		return 0, errors.New("player info logic is nil")
+	}
+	// playerId 为 0 时从 token 解析自身ID
+	if playerId == 0 {
+		if token == "" {
+			return 0, errors.New("token is empty")
+		}
+		claims, expired, err := p.jwt.ParseToken(token)
+		if err != nil {
+			if expired {
+				return 0, errors.New("token过期了兄弟")
+			}
+			return 0, err
+		}
+		playerId = claims.UserID
+	}
 	return p.userRepo.GetPlayerEquipGunId(ctx, playerId)
 }
 

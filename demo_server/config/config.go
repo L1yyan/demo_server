@@ -17,6 +17,7 @@ const (
 	configPathEnvName      = "DEMO_SERVER_CONFIG" // 配置文件路径环境变量
 	defaultConfigPath      = "config/config.yaml" // 默认配置文件路径
 	defaultLogicListenAddr = ":8080"              // logicserver 默认监听地址
+	defaultLogicHTTPListenAddr = ":8081"          // logicserver HTTP 网关默认监听地址
 	defaultMatchServerAddr = "127.0.0.1:8090"     // 默认matchserver地址
 	defaultMatchListenAddr = ":8090"              // matchserver 默认监听地址
 	defaultRoomTokenExpire = time.Minute          // room token 默认有效期
@@ -75,10 +76,12 @@ type JwtConfig struct {
 
 // LogicServerConfig logicserver运行配置
 type LogicServerConfig struct {
-	ListenAddr      string        `yaml:"listen_addr"`       // gRPC监听地址
-	MatchServerAddr string        `yaml:"match_server_addr"` // matchserver地址
-	Redis           RedisConfig   `yaml:"redis"`             // Redis配置
-	MongoDB         MongoDBConfig `yaml:"mongodb"`           // MongoDB配置
+	ListenAddr            string        `yaml:"listen_addr"`            // gRPC监听地址
+	HTTPListenAddr        string        `yaml:"http_listen_addr"`       // HTTP 网关监听地址（移动端走 HTTP，规避 gRPC 原生层打包问题）
+	RequestTimeoutSeconds int           `yaml:"request_timeout_seconds"` // HTTP 单请求业务超时秒数
+	MatchServerAddr       string        `yaml:"match_server_addr"`      // matchserver地址
+	Redis                 RedisConfig   `yaml:"redis"`                  // Redis配置
+	MongoDB               MongoDBConfig `yaml:"mongodb"`                // MongoDB配置
 }
 
 // MatchServerConfig matchserver运行配置
@@ -139,6 +142,12 @@ func FindConfigPath() (string, error) {
 func (c *Config) normalize() {
 	if strings.TrimSpace(c.LogicServer01.ListenAddr) == "" {
 		c.LogicServer01.ListenAddr = defaultLogicListenAddr
+	}
+	if strings.TrimSpace(c.LogicServer01.HTTPListenAddr) == "" {
+		c.LogicServer01.HTTPListenAddr = defaultLogicHTTPListenAddr
+	}
+	if c.LogicServer01.RequestTimeoutSeconds <= 0 {
+		c.LogicServer01.RequestTimeoutSeconds = 10
 	}
 	if strings.TrimSpace(c.LogicServer01.MatchServerAddr) == "" {
 		c.LogicServer01.MatchServerAddr = defaultMatchServerAddr

@@ -12,7 +12,7 @@ email:
 #Jwt
 jwt:
   secretKey: "rM8jI7hB6mH7tZ1nN5"
-  tokenExpire: "1h"
+  tokenExpire: "24h"
   refreshExpire: "168h"
   tokenHeaderKey: "Authorization"
   refreshTokenKey: "Refresh-Token"
@@ -23,14 +23,16 @@ jwt:
 #logic_server
 logic_server_01:
   listen_addr: "0.0.0.0:8080"
-  match_server_addr: "127.0.0.1:8090"
+  http_listen_addr: "0.0.0.0:8081"
+  request_timeout_seconds: 10
+  match_server_addr: "192.168.116.164:8090"
   redis:
-    addr: "127.0.0.1:6379"
+    addr: "192.168.116.54:6379"
     password: "Liyan927927."
     db: 0
     pool_size: 20
   mongodb:
-    addr: "127.0.0.1:27017"
+    addr: "192.168.116.54:27017"
     username: "demo_server"
     password: "Liyan927927."
     database: "demo_server"
@@ -41,19 +43,19 @@ logic_server_01:
 
 #match_server
 match_server_01:
-  listen_addr: ":8090"
+  listen_addr: "192.168.116.164:8090"
   token_secret: "room-token-secret"
   token_expire: "1m"
   max_players_per_room: 2
   room_servers:
     - server_id: "room-01"
-      server_addr: "172.29.168.6:9001"
+      server_addr: "192.168.116.164:9001"
       max_rooms: 1000
       max_players_per_room: 2
 
 #room_server
 room_server_01:
-  logic_server_addr: "127.0.0.1:8080"
+  logic_server_addr: "192.168.116.164:8080"
   server_id: "room-01"
   listen_addr: "0.0.0.0:9001"
   token_secret: "room-token-secret"
@@ -69,7 +71,7 @@ room_server_01:
   player_capsule_height: 1.8
   physics_ground_plane: true
   physx_pvd_enabled: false
-  physx_pvd_host: "172.29.160.1"
+  physx_pvd_host: "127.0.0.1"
   physx_pvd_port: 5425
   physx_pvd_timeout_ms: 100
   default_map_id: "mfps_arena"

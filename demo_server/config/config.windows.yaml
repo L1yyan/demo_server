@@ -10,7 +10,7 @@ email:
 
 jwt:
   secretKey: "rM8jI7hB6mH7tZ1nN5"
-  tokenExpire: "1h"
+  tokenExpire: "24h"
   refreshExpire: "168h"
   tokenHeaderKey: "Authorization"
   refreshTokenKey: "Refresh-Token"
@@ -20,14 +20,16 @@ jwt:
 
 logic_server_01:
   listen_addr: "0.0.0.0:8080"
-  match_server_addr: "127.0.0.1:8090"
+  http_listen_addr: "0.0.0.0:8081"
+  request_timeout_seconds: 10
+  match_server_addr: "192.168.116.164:8090"
   redis:
-    addr: "127.0.0.1:6379"
+    addr: "192.168.116.54:6379"
     password: "Liyan927927."
     db: 0
     pool_size: 20
   mongodb:
-    addr: "127.0.0.1:27017"
+    addr: "192.168.116.54:27017"
     username: "demo_server"
     password: "Liyan927927."
     database: "demo_server"
@@ -43,7 +45,7 @@ match_server_01:
   max_players_per_room: 2
   room_servers:
     - server_id: "room-01"
-      server_addr: "127.0.0.1:9001"
+      server_addr: "192.168.116.164:9001"
       max_rooms: 1000
       max_players_per_room: 2
 

@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	conf "demo_server/config"
 	logicpb "demo_server/gen/logic"
@@ -14,6 +17,7 @@ import (
 	jwttool "demo_server/pkg/jwt"
 	"demo_server/pkg/mongodb"
 	redisx "demo_server/pkg/redis"
+	"demo_server/src/logicserver/httpgateway"
 	"demo_server/src/logicserver/logic"
 	"demo_server/src/logicserver/repo"
 	"demo_server/src/logicserver/service"
@@ -93,9 +97,34 @@ func main() {
 	}
 	glog.Info(ctx, "logicserver started", glog.String("addr", cfg.LogicServer01.ListenAddr), glog.String("match_addr", cfg.LogicServer01.MatchServerAddr))
 
+	// HTTP/JSON 网关：给移动端客户端使用（规避 gRPC 原生层在 Android/iOS 打包问题）。
+	// 内部服务间调用（roomserver->logicserver、logicserver->matchserver）仍走 gRPC。
+	httpGateway := httpgateway.New(authLogic, matchLogic, playerInfoLogic, mallLogic, time.Duration(cfg.LogicServer01.RequestTimeoutSeconds)*time.Second)
+	httpServer := &http.Server{
+		Addr:    cfg.LogicServer01.HTTPListenAddr,
+		Handler: httpGateway.Handler(),
+	}
+	httpListener, err := net.Listen("tcp", cfg.LogicServer01.HTTPListenAddr)
+	if err != nil {
+		glog.Fatal(ctx, "listen logicserver http gateway failed", glog.String("addr", cfg.LogicServer01.HTTPListenAddr), glog.Err(err))
+	}
+	glog.Info(ctx, "logicserver http gateway started", glog.String("addr", cfg.LogicServer01.HTTPListenAddr))
+
 	go func() {
 		<-ctx.Done()
 		grpcServer.GracefulStop()
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			glog.Warn(ctx, "shutdown http gateway failed", glog.Err(err))
+		}
+	}()
+
+	// 启动 HTTP 网关，失败不阻塞 gRPC 主服务
+	go func() {
+		if err := httpServer.Serve(httpListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			glog.Error(ctx, "serve logicserver http gateway failed", glog.String("addr", cfg.LogicServer01.HTTPListenAddr), glog.Err(err))
+		}
 	}()
 
 	// 启动 gRPC 服务，直到进程收到退出信号

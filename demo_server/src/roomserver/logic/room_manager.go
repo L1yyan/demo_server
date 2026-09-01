@@ -87,17 +87,32 @@ func NewRoomManagerWithOptions(ctx context.Context, maxRooms int, maxPlayersPerR
 // JoinRoom 加入房间，不存在时自动创建房间
 func (m *RoomManager) JoinRoom(roomID string, player *Player) error {
 
-	//TODO:这里获取equip_gun id 绑到Player上
 	if player == nil {
 		return errors.New("player is nil")
 	}
-	var req logicpb.GetEquipGunReq
-	req.PlayerId = player.ID
-	resp, err := m.logicClient.GetEquipGun(context.Background(), &req)
+	if m == nil || m.logicClient == nil {
+		return errors.New("logic client is nil")
+	}
+
+	// 入房前读取服务端持久化的装备，避免带着错误的初始武器进入对局
+	queryCtx, cancel := context.WithTimeout(m.ctx, 2*time.Second)
+	defer cancel()
+	resp, err := m.logicClient.GetEquipGun(queryCtx, &logicpb.GetEquipGunReq{PlayerId: player.ID})
 	if err != nil {
-		return err
+		glog.Error(m.ctx, "get equip gun failed, reject room join", glog.Uint64("player_id", player.ID), glog.Err(err))
+		return errors.New("load equipped gun failed")
+	}
+	if resp == nil {
+		glog.Error(m.ctx, "get equip gun returned nil response, reject room join", glog.Uint64("player_id", player.ID))
+		return errors.New("load equipped gun failed")
+	}
+	if !resp.Status {
+		glog.Warn(m.ctx, "get equip gun status false, reject room join", glog.Uint64("player_id", player.ID), glog.String("content", resp.Content), glog.Int("gun_id", int(resp.GunId)))
+		return errors.New("load equipped gun failed")
 	}
 	player.GunId = resp.GunId
+	glog.Info(m.ctx, "player equip gun loaded", glog.Uint64("player_id", player.ID), glog.Int("gun_id", int(player.GunId)), glog.String("content", resp.Content))
+
 	room, err := m.getOrCreateRoom(roomID)
 	if err != nil {
 		return err
@@ -222,50 +237,74 @@ func (m *RoomManager) getOrCreateRoom(roomID string) (*Room, error) {
 	return room, nil
 }
 
-// finishRoom 清理已结束房间索引
+// finishRoom 清理已结束房间索引并结算对局奖励
 func (m *RoomManager) finishRoom(room *Room, playerIDs []uint64) {
-	if room == nil {
+	if room == nil || len(playerIDs) == 0 {
 		return
 	}
+
+	// 在 room loop goroutine 中安全读取战绩，此时其他 goroutine 不会修改 room.players
+	killCount := make([]int64, len(playerIDs))
+	for i, playerID := range playerIDs {
+		player := room.players[playerID]
+		if player != nil {
+			killCount[i] = int64(player.KillCount)
+		}
+	}
+
+	// 短暂持锁清理索引，不做网络调用
 	m.mu.Lock()
 	if m.rooms[room.ID()] == room {
 		delete(m.rooms, room.ID())
 	}
-
-	//结算对局到logicserver落地
-	//奖励先写死 按照击杀数量判定输赢,击杀多的获得500Exp 1000coin 击杀少的获得200Exp 300coin 平局算400Exp 800coin
-	//奖励要和playerid索引对应着写入
-	var req logicpb.SettleUpGameRewardAndKdReq
-
-	for playerID, roomID := range m.playerRooms {
-		req.PlayerIds = append(req.PlayerIds, playerID)
-		req.KillCount = append(req.KillCount, int64(m.rooms[roomID].players[playerID].KillCount))
-	}
-
-	if req.KillCount[0] > req.KillCount[1] {
-		req.Coin[0] = 500
-		req.Exp[0] = 1000
-		req.Coin[1] = 300
-		req.Exp[1] = 200
-	} else if req.KillCount[0] < req.KillCount[1] {
-		req.Coin[1] = 500
-		req.Exp[1] = 1000
-		req.Coin[0] = 300
-		req.Exp[0] = 200
-	} else {
-		req.Coin[0] = 800
-		req.Coin[1] = 800
-		req.Exp[0] = 400
-		req.Exp[1] = 400
-
-	}
-	_, err := m.logicClient.SettleUpGameRewardAndKd(m.ctx, &req)
-	glog.Error(m.ctx, "结算失败:", glog.String("room_id:", room.id), glog.String("err:", err.Error()))
-	for playerID, roomID := range m.playerRooms {
-		if roomID == room.ID() {
+	for _, playerID := range playerIDs {
+		if m.playerRooms[playerID] == room.ID() {
 			delete(m.playerRooms, playerID)
 		}
 	}
-
 	m.mu.Unlock()
+
+	// 锁外构造结算请求并调用 logicserver
+	req := &logicpb.SettleUpGameRewardAndKdReq{
+		PlayerIds: playerIDs,
+		KillCount: killCount,
+		Coin:      make([]int64, len(playerIDs)),
+		Exp:       make([]int64, len(playerIDs)),
+	}
+
+	// 仅在标准1v1两人对局时按胜负分配奖励，其他人数（中途有人离开）给参与奖励
+	if len(playerIDs) == 2 {
+		// 击杀多的获得1000coin 500exp，击杀少的获得300coin 200exp，平局各得800coin 400exp
+		if killCount[0] > killCount[1] {
+			req.Coin[0] = 1000
+			req.Exp[0] = 500
+			req.Coin[1] = 300
+			req.Exp[1] = 200
+		} else if killCount[0] < killCount[1] {
+			req.Coin[1] = 1000
+			req.Exp[1] = 500
+			req.Coin[0] = 300
+			req.Exp[0] = 200
+		} else {
+			req.Coin[0] = 800
+			req.Coin[1] = 800
+			req.Exp[0] = 400
+			req.Exp[1] = 400
+		}
+	} else {
+		glog.Warn(m.ctx, "对局结束时人数非2人，按参与奖励结算", glog.String("room_id", room.id), glog.Int("player_count", len(playerIDs)))
+		for i := range playerIDs {
+			req.Coin[i] = 300
+			req.Exp[i] = 200
+		}
+	}
+
+	resp, err := m.logicClient.SettleUpGameRewardAndKd(m.ctx, req)
+	if err != nil {
+		glog.Error(m.ctx, "结算RPC调用失败", glog.String("room_id", room.id), glog.Err(err))
+		return
+	}
+	if !resp.Status {
+		glog.Error(m.ctx, "结算失败", glog.String("room_id", room.id), glog.String("content", resp.Content))
+	}
 }

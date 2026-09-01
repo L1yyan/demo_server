@@ -38,7 +38,11 @@ function Find-CommandAny {
 
 Require-Command "go" "Install Go and make sure it is in PATH."
 $CCompiler = Find-CommandAny -Names @("x86_64-w64-mingw32-gcc", "gcc", "clang") -Hint "missing C compiler for cgo. Install MSYS2 MinGW64 GCC or LLVM clang and make sure it is in PATH."
-$env:CC = $CCompiler.Path
+
+# 将 CC 转换为 8.3 短路径，避免路径中包含空格（例如 "C:\Program Files"）
+# 被 cgo 按空格拆分成 "C:\Program" 导致编译器查找失败
+$Fso = New-Object -ComObject Scripting.FileSystemObject
+$env:CC = $Fso.GetFile($CCompiler.Path).ShortPath
 
 Set-Location $RootDir
 New-Item -ItemType Directory -Path $BinDir -Force | Out-Null

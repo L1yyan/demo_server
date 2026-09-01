@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strconv"
 
 	logicpb "demo_server/gen/logic"
 	"demo_server/pkg/glog"
@@ -136,7 +137,7 @@ func (s *LogicService) GetPlayerInfo(ctx context.Context, req *logicpb.GetPlayer
 	resp.Content = "player info retrieved successfully"
 	resp.PlayerId = userInfo.UserID
 	resp.PlayerExp = uint64(userInfo.Exp)
-	resp.PlayerLevel = userInfo.Level
+	resp.PlayerLevel = strconv.FormatInt(userInfo.Level, 10)
 	resp.Player_Nickname = userInfo.Nickname
 	resp.PlayerCoins = uint64(userInfo.Coins)
 	resp.PlayerProfilePhotoId = userInfo.ProfilePhotoID
@@ -202,8 +203,8 @@ func (s *LogicService) MatchRoom(ctx context.Context, req *logicpb.MatchRoomReq)
 	}, nil
 }
 
-// SettleUpRoom 结算房间 req里的expcoin的数组索引对应的是相同索引序号的playerids数组里的玩家收益
-func (s *LogicService) SettleUpRoom(ctx context.Context, req *logicpb.SettleUpGameRewardAndKdReq) (*logicpb.SettleUpGameRewardAndKdResp, error) {
+// SettleUpGameRewardAndKd 结算对局奖励和KDA，req里exp/coin数组索引与player_ids索引一一对应
+func (s *LogicService) SettleUpGameRewardAndKd(ctx context.Context, req *logicpb.SettleUpGameRewardAndKdReq) (*logicpb.SettleUpGameRewardAndKdResp, error) {
 	var resp logicpb.SettleUpGameRewardAndKdResp
 	resp.Status = false
 	if s == nil || s.playerInfo == nil {
@@ -214,8 +215,18 @@ func (s *LogicService) SettleUpRoom(ctx context.Context, req *logicpb.SettleUpGa
 		resp.Content = "req is nil"
 		return &resp, nil
 	}
-	s.playerInfo.SettleUpRoom(ctx, req.PlayerIds, req.Exp, req.Coin, req.KillCount)
+	// 校验各数组长度一致，避免按索引取值时越界或错位
+	playerCount := len(req.PlayerIds)
+	if len(req.Exp) != playerCount || len(req.Coin) != playerCount || len(req.KillCount) != playerCount {
+		resp.Content = "array length mismatch"
+		return &resp, nil
+	}
+	if err := s.playerInfo.SettleUpRoom(ctx, req.PlayerIds, req.Exp, req.Coin, req.KillCount); err != nil {
+		resp.Content = err.Error()
+		return &resp, nil
+	}
 	resp.Status = true
+	resp.Content = "ok"
 	return &resp, nil
 }
 
@@ -326,14 +337,16 @@ func (s *LogicService) GetEquipGun(ctx context.Context, req *logicpb.GetEquipGun
 		resp.Content = "req is nil"
 		return &resp, nil
 	}
-	gunId, err := s.playerInfo.GetEquipGun(ctx, req.PlayerId)
+	gunId, err := s.playerInfo.GetEquipGun(ctx, req.AccessToken, req.PlayerId)
 	if err != nil {
-		resp.Content = "equip fail"
+		glog.Error(ctx, "get equipped gun failed", glog.Uint64("player_id", req.PlayerId), glog.Err(err))
+		resp.Content = err.Error()
 		return &resp, nil
 	}
 	resp.Status = true
 	resp.GunId = gunId
 	resp.Content = "ok"
+	glog.Info(ctx, "equipped gun loaded", glog.Uint64("player_id", req.PlayerId), glog.Int("gun_id", int(gunId)))
 	return &resp, nil
 }
 

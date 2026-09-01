@@ -4,7 +4,7 @@ type UserInfo struct {
 	UserID         uint64 `bson:"user_id"`          // 业务用户ID
 	Email          string `bson:"email"`            // 邮箱
 	Nickname       string `bson:"nickname"`         // 昵称
-	Level          string `bson:"level"`            // 等级
+	Level          int64  `bson:"level"`            // 等级
 	Exp            int64  `bson:"exp"`              // 经验值
 	EquipGun       int32  `bson:"equip_gun"`        //装备的武器
 	Coins          int64  `bson:"coins"`            // 货币数量

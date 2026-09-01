@@ -15,9 +15,11 @@
 using namespace physx;
 
 struct player_actor {
-    PxRigidDynamic* actor; // 玩家在 PhysX scene 中的 kinematic 胶囊体 actor
-    double radius;         // 玩家胶囊体半径，移动 sweep 时用于重建碰撞形状
-    double height;         // 玩家胶囊体总高度，用于业务脚底坐标和 PhysX 中心坐标互转
+    PxCapsuleController* controller; // 玩家使用的 PhysX 胶囊体控制器
+    PxRigidDynamic* actor;            // CCT 内部代理 actor，过渡期供旧移动和射线查询使用
+    double radius;                    // 玩家胶囊体半径
+    double height;                    // 玩家胶囊体总高度，用于业务脚底坐标和 CCT 位置转换
+    double contact_offset;            // CCT 接触偏移，用于保持业务脚底坐标稳定
 };
 
 struct px_runtime {
@@ -37,7 +39,8 @@ struct px_world {
     PxDefaultCpuDispatcher* dispatcher;                 // 当前 scene 的 CPU 任务调度器
     PxScene* scene;                                     // 房间级物理场景，玩家、地图碰撞和查询都在这里执行
     PxMaterial* material;                               // 默认物理材质，创建地图碰撞体和玩家胶囊体时复用
-    std::unordered_map<uint64_t, player_actor> players; // 玩家ID到 PhysX actor 的映射
+    PxControllerManager* controller_manager;            // 房间级 CCT 管理器，每个 scene 只能创建一个
+    std::unordered_map<uint64_t, player_actor> players; // 玩家ID到 CCT 和代理 actor 的映射
     std::vector<PxRigidStatic*> static_actors;          // 地图静态碰撞 actor 列表，world 释放时统一回收
     std::vector<PxTriangleMesh*> triangle_meshes;       // cooked triangle mesh 资源列表，mesh actor 释放后也要回收
 };
@@ -48,10 +51,9 @@ std::mutex g_runtime_mutex;
 px_runtime* g_runtime = nullptr;
 constexpr double k_player_jump_speed = 5.0;
 constexpr double k_player_gravity = -9.8;
-constexpr PxReal k_sweep_skin_width = 0.01f;
-constexpr PxReal k_ground_probe_distance = 0.12f;
-constexpr PxReal k_walkable_normal_y = 0.5f;
-constexpr PxReal k_ceiling_normal_y = -0.5f;
+constexpr PxReal k_cct_contact_offset = 0.01f;
+constexpr PxReal k_cct_step_offset = 0.5f;
+constexpr PxReal k_cct_slope_limit = 0.0f;
 
 void set_error(char* err, int err_len, const char* message) {
     if (err == nullptr || err_len <= 0) {
@@ -127,22 +129,42 @@ private:
     const PxRigidActor* ignored_actor_; // 本次 scene query 要忽略的 actor 指针
 };
 
-PxReal capsule_half_height(double radius, double height) {
-    // PhysX capsule 的 halfHeight 是中间圆柱段的一半，不是胶囊体总高度的一半
-    return static_cast<PxReal>(std::max(0.01, (height - radius * 2.0) * 0.5));
+class IgnoreCCTFilter : public PxControllerFilterCallback {
+public:
+    // 当前项目不新增玩家之间的阻挡或推动，显式过滤所有 CCT 对之间的交互
+    bool filter(const PxController&, const PxController&) override {
+        return false;
+    }
+};
+
+PxReal capsule_controller_height(double radius, double height) {
+    // CCT height 表示两端球心距离，业务 height 表示胶囊体端到端总高度
+    return static_cast<PxReal>(height - radius * 2.0);
 }
 
-PxTransform player_transform(px_vec3 position, double radius, double height) {
-    // 业务层记录玩家脚底位置，PhysX actor 使用胶囊体中心位置
-    PxReal center_y = static_cast<PxReal>(position.y + height * 0.5);
-    // PhysX capsule 默认沿 X 轴，这里旋转到服务端使用的 Y 轴竖直方向
-    return PxTransform(PxVec3(static_cast<PxReal>(position.x), center_y, static_cast<PxReal>(position.z)), PxQuat(PxHalfPi, PxVec3(0, 0, 1)));
+PxExtendedVec3 controller_center_position(px_vec3 position, double height, double contact_offset) {
+    // 业务层使用胶囊底部坐标，CCT 中心还要加上半高和接触偏移
+    return PxExtendedVec3(static_cast<PxExtended>(position.x), static_cast<PxExtended>(position.y + height * 0.5 + contact_offset), static_cast<PxExtended>(position.z));
 }
 
-px_vec3 actor_player_position(PxRigidDynamic* actor, double height) {
-    PxTransform pose = actor->getGlobalPose();
-    // 返回给 Go 侧时还原为业务脚底坐标
-    return px_vec3{static_cast<double>(pose.p.x), static_cast<double>(pose.p.y) - height * 0.5, static_cast<double>(pose.p.z)};
+PxExtendedVec3 controller_foot_position(px_vec3 position) {
+    // setFootPosition 接受包含 contact offset 语义的业务脚底坐标
+    return PxExtendedVec3(static_cast<PxExtended>(position.x), static_cast<PxExtended>(position.y), static_cast<PxExtended>(position.z));
+}
+
+void refresh_scene_queries(PxScene* scene) {
+    if (scene == nullptr) {
+        return;
+    }
+    scene->flushQueryUpdates();
+    scene->sceneQueriesUpdate();
+    scene->fetchQueries(true);
+}
+
+px_vec3 controller_player_position(PxCapsuleController* controller) {
+    PxExtendedVec3 foot = controller->getFootPosition();
+    // getFootPosition 的坐标契约与业务脚底坐标保持一致，contact offset 已包含在 CCT foot 定义中
+    return px_vec3{static_cast<double>(foot.x), static_cast<double>(foot.y), static_cast<double>(foot.z)};
 }
 
 void cleanup_runtime(px_runtime* runtime) {
@@ -212,6 +234,25 @@ bool configure_scene_pvd(PxScene* scene, char* err, int err_len) {
         return false;
     }
 
+    // 开启 PhysX 调试渲染总开关和碰撞形状，确保 PVD 生成可视化几何
+    if (!scene->setVisualizationParameter(PxVisualizationParameter::eSCALE, 1.0f)) {
+        set_error(err, err_len, "set pvd visualization scale failed");
+        return false;
+    }
+    if (!scene->setVisualizationParameter(PxVisualizationParameter::eCOLLISION_SHAPES, 1.0f)) {
+        set_error(err, err_len, "set pvd collision shapes visualization failed");
+        return false;
+    }
+    if (!scene->setVisualizationParameter(PxVisualizationParameter::eCOLLISION_AXES, 1.0f)) {
+        set_error(err, err_len, "set pvd collision axes visualization failed");
+        return false;
+    }
+    if (!scene->setVisualizationParameter(PxVisualizationParameter::eACTOR_AXES, 1.0f)) {
+        set_error(err, err_len, "set pvd actor axes visualization failed");
+        return false;
+    }
+
+    // 开启接触、场景查询和约束数据传输，便于在 PVD 中观察物理调试过程
     pvd_client->setScenePvdFlag(PxPvdSceneFlag::eTRANSMIT_CONTACTS, true);
     pvd_client->setScenePvdFlag(PxPvdSceneFlag::eTRANSMIT_SCENEQUERIES, true);
     pvd_client->setScenePvdFlag(PxPvdSceneFlag::eTRANSMIT_CONSTRAINTS, true);
@@ -338,6 +379,15 @@ PHYSX_BRIDGE_API px_world* px_world_create(int create_ground_plane, px_pvd_confi
         return nullptr;
     }
 
+    // 每个 PhysX scene 只创建一个 CCT manager，后续房间内玩家 controller 由它统一管理
+    world->controller_manager = PxCreateControllerManager(*world->scene);
+    if (world->controller_manager == nullptr) {
+        set_error(err, err_len, "create controller manager failed");
+        px_world_release(world);
+        return nullptr;
+    }
+    world->controller_manager->setOverlapRecoveryModule(true);
+
     if (create_ground_plane != 0) {
         PxRigidStatic* plane = PxCreatePlane(*runtime->physics, PxPlane(0, 1, 0, 0), *world->material);
         if (plane == nullptr) {
@@ -356,11 +406,14 @@ PHYSX_BRIDGE_API void px_world_release(px_world* world) {
     if (world == nullptr) {
         return;
     }
-    for (auto& item : world->players) {
-        if (item.second.actor != nullptr) {
-            item.second.actor->release();
-        }
+
+    // CCT manager 会持有 controller 和底层 proxy actor，必须先于 scene、dispatcher 和 runtime 释放
+    if (world->controller_manager != nullptr) {
+        world->controller_manager->release();
+        world->controller_manager = nullptr;
     }
+
+    // manager.release 已经释放全部 controller 及其底层 proxy actor，不能再次释放 actor
     world->players.clear();
     for (auto* actor : world->static_actors) {
         if (actor != nullptr) {
@@ -500,17 +553,50 @@ PHYSX_BRIDGE_API int px_world_add_player_capsule(px_world* world, uint64_t playe
         return 1;
     }
 
-    PxCapsuleGeometry geometry(static_cast<PxReal>(radius), capsule_half_height(radius, height));
-    PxRigidDynamic* actor = PxCreateDynamic(*physics, player_transform(position, radius, height), geometry, *world->material, 1.0f);
-    if (actor == nullptr) {
-        set_error(err, err_len, "create player actor failed");
+    if (world->controller_manager == nullptr) {
+        set_error(err, err_len, "controller manager is nil");
         return 1;
     }
+
+    const PxReal controller_radius = static_cast<PxReal>(radius);
+    const PxReal controller_height = capsule_controller_height(radius, height);
+    if (controller_height <= 0.0f) {
+        set_error(err, err_len, "invalid player controller height");
+        return 1;
+    }
+
+    // CCT 的 position 是碰撞体中心，先按业务脚底坐标设置初始中心位置
+    PxCapsuleControllerDesc desc;
+    desc.position = controller_center_position(position, height, k_cct_contact_offset);
+    desc.upDirection = PxVec3(0.0f, 1.0f, 0.0f);
+    desc.radius = controller_radius;
+    desc.height = controller_height;
+    desc.contactOffset = k_cct_contact_offset;
+    desc.stepOffset = std::min(k_cct_step_offset, static_cast<PxReal>(height));
+    desc.slopeLimit = k_cct_slope_limit;
+    desc.material = world->material;
+    desc.userData = reinterpret_cast<void*>(static_cast<uintptr_t>(player_id));
+    if (!desc.isValid()) {
+        set_error(err, err_len, "invalid player controller desc");
+        return 1;
+    }
+
+    PxController* base_controller = world->controller_manager->createController(desc);
+    if (base_controller == nullptr) {
+        set_error(err, err_len, "create player controller failed");
+        return 1;
+    }
+    PxCapsuleController* controller = static_cast<PxCapsuleController*>(base_controller);
+    PxRigidDynamic* actor = controller->getActor();
+    if (actor == nullptr) {
+        controller->release();
+        set_error(err, err_len, "create player controller actor failed");
+        return 1;
+    }
+    // userData 需要同时设置在 controller 和其内部代理 actor 上，保证射线可以返回玩家 ID
+    controller->setUserData(reinterpret_cast<void*>(static_cast<uintptr_t>(player_id)));
     actor->userData = reinterpret_cast<void*>(static_cast<uintptr_t>(player_id));
-    actor->setRigidBodyFlag(PxRigidBodyFlag::eKINEMATIC, true);
-    actor->setActorFlag(PxActorFlag::eDISABLE_GRAVITY, true);
-    world->scene->addActor(*actor);
-    world->players[player_id] = player_actor{actor, radius, height};
+    world->players[player_id] = player_actor{controller, actor, radius, height, static_cast<double>(k_cct_contact_offset)};
     return 0;
 }
 
@@ -523,8 +609,9 @@ PHYSX_BRIDGE_API int px_world_remove_player(px_world* world, uint64_t player_id,
     if (iter == world->players.end()) {
         return 0;
     }
-    if (iter->second.actor != nullptr) {
-        iter->second.actor->release();
+    // controller 的底层代理 actor 由 controller manager 管理，只释放 controller
+    if (iter->second.controller != nullptr) {
+        iter->second.controller->release();
     }
     world->players.erase(iter);
     return 0;
@@ -536,7 +623,7 @@ PHYSX_BRIDGE_API int px_world_move_player(px_world* world, uint64_t player_id, p
         return 1;
     }
     auto iter = world->players.find(player_id);
-    if (iter == world->players.end() || iter->second.actor == nullptr) {
+    if (iter == world->players.end() || iter->second.controller == nullptr || iter->second.actor == nullptr) {
         set_error(err, err_len, "player not found");
         return 1;
     }
@@ -545,7 +632,6 @@ PHYSX_BRIDGE_API int px_world_move_player(px_world* world, uint64_t player_id, p
         return 1;
     }
 
-    PxRigidDynamic* actor = iter->second.actor;
     PxVec3 horizontal = to_px_vec3(direction);
     PxReal horizontal_length = horizontal.magnitude();
     if (horizontal_length > 0.0001f && distance > 0) {
@@ -554,6 +640,7 @@ PHYSX_BRIDGE_API int px_world_move_player(px_world* world, uint64_t player_id, p
         horizontal = PxVec3(0.0f);
     }
 
+    // 保留原有跳跃初速度和重力规则，CCT 只负责碰撞推进
     double next_vertical_velocity = vertical_velocity;
     if (jump != 0 && grounded != 0) {
         next_vertical_velocity = k_player_jump_speed + k_player_gravity * delta_time;
@@ -564,47 +651,31 @@ PHYSX_BRIDGE_API int px_world_move_player(px_world* world, uint64_t player_id, p
     }
     PxVec3 displacement = horizontal + PxVec3(0.0f, static_cast<PxReal>(next_vertical_velocity * delta_time), 0.0f);
 
-    PxCapsuleGeometry geometry(static_cast<PxReal>(iter->second.radius), capsule_half_height(iter->second.radius, iter->second.height));
-    PxTransform current = actor->getGlobalPose();
-    PxQueryFilterData filter_data(PxQueryFlag::eSTATIC | PxQueryFlag::eDYNAMIC | PxQueryFlag::ePREFILTER);
-    IgnoreActorFilter filter_callback(actor);
+    PxFilterData filter_data;
+    IgnoreActorFilter filter_callback(iter->second.actor);
+    IgnoreCCTFilter cct_filter;
+    PxControllerFilters filters(&filter_data, &filter_callback, &cct_filter);
 
-    bool blocked = false;
-    bool is_grounded = false;
-    PxTransform next = current;
-    PxReal move_distance = displacement.magnitude();
-    if (move_distance > 0.0001f) {
-        PxVec3 move_dir = displacement / move_distance;
-        PxSweepBuffer sweep_hit;
-        blocked = world->scene->sweep(geometry, current, move_dir, move_distance, sweep_hit, PxHitFlag::eDEFAULT, filter_data, &filter_callback);
-        PxReal travel = move_distance;
-        if (blocked && sweep_hit.hasBlock) {
-            travel = std::max<PxReal>(0.0f, sweep_hit.block.distance - k_sweep_skin_width);
-            if (sweep_hit.block.normal.y >= k_walkable_normal_y && next_vertical_velocity <= 0.0) {
-                is_grounded = true;
-                next_vertical_velocity = 0.0;
-            } else if (sweep_hit.block.normal.y <= k_ceiling_normal_y && next_vertical_velocity > 0.0) {
-                next_vertical_velocity = 0.0;
-            }
-        }
-        next.p += move_dir * travel;
-        
+    // CCT move 内部完成 sweep、碰撞修正和 collide-and-slide，不再推进整个 scene
+    PxControllerCollisionFlags collision_flags = iter->second.controller->move(
+        displacement,
+        0.0001f,
+        static_cast<PxReal>(delta_time),
+        filters
+    );
+
+    bool side_blocked = collision_flags.isSet(PxControllerCollisionFlag::eCOLLISION_SIDES);
+    bool ceiling_blocked = collision_flags.isSet(PxControllerCollisionFlag::eCOLLISION_UP);
+    bool is_grounded = collision_flags.isSet(PxControllerCollisionFlag::eCOLLISION_DOWN);
+    if (ceiling_blocked && next_vertical_velocity > 0.0) {
+        next_vertical_velocity = 0.0;
     }
-
-    PxSweepBuffer ground_hit;
-    bool ground_blocked = world->scene->sweep(geometry, next, PxVec3(0.0f, -1.0f, 0.0f), k_ground_probe_distance, ground_hit, PxHitFlag::eDEFAULT, filter_data, &filter_callback);
-    if (ground_blocked && ground_hit.hasBlock && ground_hit.block.normal.y >= k_walkable_normal_y && next_vertical_velocity <= 0.0) {
-        is_grounded = true;
+    if (is_grounded && next_vertical_velocity <= 0.0) {
         next_vertical_velocity = 0.0;
     }
 
-    actor->setKinematicTarget(next);
-    world->scene->simulate(static_cast<PxReal>(delta_time));
-    world->scene->fetchResults(true);
-    actor->setGlobalPose(next);
-
-    *out_position = actor_player_position(actor, iter->second.height);
-    *out_blocked = blocked ? 1 : 0;
+    *out_position = controller_player_position(iter->second.controller);
+    *out_blocked = (side_blocked || ceiling_blocked) ? 1 : 0;
     *out_grounded = is_grounded ? 1 : 0;
     *out_vertical_velocity = next_vertical_velocity;
     return 0;
@@ -616,11 +687,11 @@ PHYSX_BRIDGE_API int px_world_get_player_position(px_world* world, uint64_t play
         return 1;
     }
     auto iter = world->players.find(player_id);
-    if (iter == world->players.end() || iter->second.actor == nullptr) {
+    if (iter == world->players.end() || iter->second.controller == nullptr) {
         set_error(err, err_len, "player not found");
         return 1;
     }
-    *out_position = actor_player_position(iter->second.actor, iter->second.height);
+    *out_position = controller_player_position(iter->second.controller);
     return 0;
 }
 
@@ -630,13 +701,25 @@ PHYSX_BRIDGE_API int px_world_set_player_position(px_world* world, uint64_t play
         return 1;
     }
     auto iter = world->players.find(player_id);
-    if (iter == world->players.end() || iter->second.actor == nullptr) {
+    if (iter == world->players.end() || iter->second.controller == nullptr) {
         set_error(err, err_len, "player not found");
         return 1;
     }
-    PxTransform next = player_transform(position, iter->second.radius, iter->second.height);
-    iter->second.actor->setKinematicTarget(next);
-    iter->second.actor->setGlobalPose(next);
+    // 重生属于传送，使用 CCT 的脚底坐标接口保持 Go 侧坐标契约
+    if (!iter->second.controller->setFootPosition(controller_foot_position(position))) {
+        set_error(err, err_len, "set player controller position failed");
+        return 1;
+    }
+    // CCT 内部会把传送结果提交给代理 actor，推进一次零时长场景更新使 scene query 立即可见
+    if (!world->scene->simulate(1.0e-6f)) {
+        set_error(err, err_len, "update player controller scene failed");
+        return 1;
+    }
+    if (!world->scene->fetchResults(true)) {
+        set_error(err, err_len, "fetch player controller scene results failed");
+        return 1;
+    }
+    refresh_scene_queries(world->scene);
     return 0;
 }
 

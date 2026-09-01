@@ -72,11 +72,11 @@ New-Item -ItemType Directory -Path $ImportLibDir -Force | Out-Null
 
 Write-Host "[bridge] configuring physx_bridge.dll"
 & cmake -S (Join-Path $RootDir "src\roomserver\physx") -B $BuildDir -G $Generator -A x64 `
-    -DDEMO_SERVER_ROOT=$RootDir `
-    -DPHYSX_SDK_DIR=$PhysXSDKDir `
-    -DPHYSX_CONFIG=$BuildType `
-    -DPHYSX_LIB_DIR=$PhysXLibDir `
-    -DPHYSX_BIN_DIR=$PhysXBinDir
+    "-DDEMO_SERVER_ROOT=$RootDir" `
+    "-DPHYSX_SDK_DIR=$PhysXSDKDir" `
+    "-DPHYSX_CONFIG=$BuildType" `
+    "-DPHYSX_LIB_DIR=$PhysXLibDir" `
+    "-DPHYSX_BIN_DIR=$PhysXBinDir"
 if ($LASTEXITCODE -ne 0) {
     throw "cmake configure failed: $LASTEXITCODE"
 }
@@ -99,8 +99,9 @@ if (-not (Test-Path $MSVCImportLib)) {
     }
 }
 
+$DefPath = Join-Path $RootDir "src\roomserver\physx\physx_bridge.def"
 $MinGWImportLib = Join-Path $ImportLibDir "libphysx_bridge.dll.a"
-Ensure-MinGWImportLib -DllPath $DllPath -OutputPath $MinGWImportLib
+Ensure-MinGWImportLib -DefPath $DefPath -DllPath $DllPath -OutputPath $MinGWImportLib
 if (-not (Test-Path $MinGWImportLib)) {
     Write-Warning "missing MinGW import library: $MinGWImportLib"
 }
