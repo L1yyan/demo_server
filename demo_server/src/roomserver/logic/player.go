@@ -31,6 +31,7 @@ type Player struct {
 	InvincibleUntilTick int64   // 无敌结束帧号
 	VerticalVelocity    float64 // 垂直速度
 	Grounded            bool    // 是否处于地面
+	Crouched            bool    // 是否处于下蹲状态
 	GunId               int32   //手持武器id
 }
 
@@ -71,6 +72,7 @@ func (p *Player) ToStateAt(serverTick int64) *roompb.PlayerState {
 		Invincible:          p.IsInvincible(serverTick),
 		InvincibleUntilTick: p.InvincibleUntilTick,
 		GunId:               p.GunId,
+		Crouched:            p.Crouched,
 	}
 }
 

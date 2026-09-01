@@ -67,6 +67,7 @@ message PlayerInput {
   double pitch = 5; // 垂直视角
   bool fire = 6; // 是否开火
   bool jump = 7; // 是否跳跃
+  bool squat = 8; // 是否下蹲
 }
 
 // PlayerState 玩家状态
@@ -84,6 +85,7 @@ message PlayerState {
   bool invincible = 11; // 是否无敌
   int64 invincible_until_tick = 12; // 无敌结束帧号
   int32 gun_id = 13; // 手持武器id
+  bool crouched = 14; // 当前是否下蹲
 }
 
 // Snapshot 状态快照

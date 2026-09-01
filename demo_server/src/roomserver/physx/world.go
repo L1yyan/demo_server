@@ -217,7 +217,7 @@ func (w *World) RemovePlayer(playerID uint64) error {
 	return nil
 }
 
-// MovePlayer 通过 PhysX CCT collide-and-slide 推进玩家位置
+// MovePlayer 通过 PhysX CCT collide-and-slide 推进玩家位置并同步下蹲姿态
 func (w *World) MovePlayer(req logic.MovePlayerRequest) (logic.MovePlayerResult, error) {
 	if w.ptr == nil {
 		return logic.MovePlayerResult{}, logic.ErrPhysicsWorldClosed
@@ -229,6 +229,7 @@ func (w *World) MovePlayer(req logic.MovePlayerRequest) (logic.MovePlayerResult,
 	var outPosition C.CVec3
 	var outBlocked C.int
 	var outGrounded C.int
+	var outCrouched C.int
 	var outVerticalVelocity C.double
 	deltaTime := req.DeltaTime
 	if deltaTime <= 0 {
@@ -238,15 +239,19 @@ func (w *World) MovePlayer(req logic.MovePlayerRequest) (logic.MovePlayerResult,
 	if req.Jump {
 		jump = 1
 	}
+	squat := C.int(0)
+	if req.Squat {
+		squat = 1
+	}
 	grounded := C.int(0)
 	if req.Grounded {
 		grounded = 1
 	}
-	code := C.px_world_move_player(w.ptr, C.uint64_t(req.PlayerID), toCVec3(req.Direction), C.double(req.Distance), C.double(deltaTime), jump, grounded, C.double(req.VerticalVelocity), &outPosition, &outBlocked, &outGrounded, &outVerticalVelocity, errBuf, cErrorBufferSize)
+	code := C.px_world_move_player(w.ptr, C.uint64_t(req.PlayerID), toCVec3(req.Direction), C.double(req.Distance), C.double(deltaTime), jump, squat, grounded, C.double(req.VerticalVelocity), &outPosition, &outBlocked, &outGrounded, &outCrouched, &outVerticalVelocity, errBuf, cErrorBufferSize)
 	if code != 0 {
 		return logic.MovePlayerResult{}, cError(errBuf, "move physx player")
 	}
-	return logic.MovePlayerResult{Position: fromCVec3(outPosition), Blocked: outBlocked != 0, Grounded: outGrounded != 0, VerticalVelocity: float64(outVerticalVelocity)}, nil
+	return logic.MovePlayerResult{Position: fromCVec3(outPosition), Blocked: outBlocked != 0, Grounded: outGrounded != 0, Crouched: outCrouched != 0, VerticalVelocity: float64(outVerticalVelocity)}, nil
 }
 
 // GetPlayerPosition 读取玩家当前 PhysX 位置

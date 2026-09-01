@@ -72,6 +72,117 @@ func TestWorldMoveAndRaycast(t *testing.T) {
 	}
 }
 
+// TestWorldCrouchResize 验证 CCT 下蹲和起身不会改变玩家脚底坐标
+func TestWorldCrouchResize(t *testing.T) {
+	world := newTestWorld(t)
+	defer closeTestWorld(t, world)
+
+	if err := world.AddPlayer(1, logic.Vector3{X: 0, Y: 0, Z: 0}); err != nil {
+		t.Fatalf("add player: %v", err)
+	}
+
+	crouchResult, err := world.MovePlayer(logic.MovePlayerRequest{
+		PlayerID:  1,
+		DeltaTime: 1.0 / 60.0,
+		Squat:     true,
+		Grounded:  true,
+	})
+	if err != nil {
+		t.Fatalf("crouch player: %v", err)
+	}
+	if !crouchResult.Crouched {
+		t.Fatal("expected player to crouch")
+	}
+	if math.Abs(crouchResult.Position.Y) > testFloatTolerance {
+		t.Fatalf("crouch changed foot position: %+v", crouchResult.Position)
+	}
+
+	// 胶囊顶部射线在站立高度范围内应不再命中下蹲玩家
+	standingHeightHit, err := world.Raycast(logic.RaycastRequest{
+		Origin: logic.Vector3{X: 0, Y: 1.5, Z: -3}, Direction: logic.Vector3{Z: 1}, MaxDistance: 6,
+	})
+	if err != nil {
+		t.Fatalf("raycast crouched player at standing height: %v", err)
+	}
+	if standingHeightHit.Hit {
+		t.Fatalf("expected standing-height ray to miss crouched player, got %+v", standingHeightHit)
+	}
+
+	standResult, err := world.MovePlayer(logic.MovePlayerRequest{
+		PlayerID:  1,
+		DeltaTime: 1.0 / 60.0,
+		Grounded:  true,
+	})
+	if err != nil {
+		t.Fatalf("stand player: %v", err)
+	}
+	if standResult.Crouched {
+		t.Fatal("expected player to stand in open space")
+	}
+	if math.Abs(standResult.Position.Y) > testFloatTolerance {
+		t.Fatalf("stand changed foot position: %+v", standResult.Position)
+	}
+
+	standingHeightHit, err = world.Raycast(logic.RaycastRequest{
+		Origin: logic.Vector3{X: 0, Y: 1.5, Z: -3}, Direction: logic.Vector3{Z: 1}, MaxDistance: 6,
+	})
+	if err != nil {
+		t.Fatalf("raycast standing player: %v", err)
+	}
+	if !standingHeightHit.Hit || standingHeightHit.TargetID != 1 {
+		t.Fatalf("expected standing-height ray to hit player, got %+v", standingHeightHit)
+	}
+}
+
+// TestWorldCrouchBlocksStandingUnderCeiling 验证低矮顶棚下起身失败时保持下蹲
+func TestWorldCrouchBlocksStandingUnderCeiling(t *testing.T) {
+	ceilingMapPath := writeTestMapCollision(t, "map_test", `
+    {
+      "id": "low_ceiling_test",
+      "shape": "box",
+      "position": [0, 1.0, 0],
+      "rotation": [0, 0, 0, 1],
+      "size": [4, 0.2, 4],
+      "is_trigger": false
+    }`)
+	world := newTestWorldWithMap(t, ceilingMapPath)
+	defer closeTestWorld(t, world)
+
+	if err := world.AddPlayer(1, logic.Vector3{X: 0, Y: 0, Z: 0}); err != nil {
+		t.Fatalf("add player: %v", err)
+	}
+	if result, err := world.MovePlayer(logic.MovePlayerRequest{
+		PlayerID: 1, DeltaTime: 1.0 / 60.0, Squat: true, Grounded: true,
+	}); err != nil {
+		t.Fatalf("crouch player: %v", err)
+	} else if !result.Crouched {
+		t.Fatal("expected player to crouch")
+	}
+
+	result, err := world.MovePlayer(logic.MovePlayerRequest{
+		PlayerID: 1, DeltaTime: 1.0 / 60.0, Grounded: true,
+	})
+	if err != nil {
+		t.Fatalf("stand under ceiling: %v", err)
+	}
+	if !result.Crouched {
+		t.Fatal("expected player to remain crouched under ceiling")
+	}
+
+	if err := world.SetPlayerPosition(1, logic.Vector3{X: 0, Y: 0, Z: 3}); err != nil {
+		t.Fatalf("move player out of ceiling: %v", err)
+	}
+	result, err = world.MovePlayer(logic.MovePlayerRequest{
+		PlayerID: 1, DeltaTime: 1.0 / 60.0, Grounded: true,
+	})
+	if err != nil {
+		t.Fatalf("stand outside ceiling: %v", err)
+	}
+	if result.Crouched {
+		t.Fatal("expected player to stand after leaving ceiling")
+	}
+}
+
 // TestWorldJump 验证 PhysX 后端支持玩家跳跃位移
 func TestWorldJump(t *testing.T) {
 	world := newTestWorld(t)

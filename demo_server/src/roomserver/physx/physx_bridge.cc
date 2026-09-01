@@ -16,10 +16,12 @@ using namespace physx;
 
 struct player_actor {
     PxCapsuleController* controller; // 玩家使用的 PhysX 胶囊体控制器
-    PxRigidDynamic* actor;            // CCT 内部代理 actor，过渡期供旧移动和射线查询使用
+    PxRigidDynamic* actor;            // CCT 内部代理 actor，供射线查询使用
     double radius;                    // 玩家胶囊体半径
-    double height;                    // 玩家胶囊体总高度，用于业务脚底坐标和 CCT 位置转换
+    double height;                    // 玩家站立时胶囊体总高度
+    double crouch_height;             // 玩家下蹲时胶囊体总高度
     double contact_offset;            // CCT 接触偏移，用于保持业务脚底坐标稳定
+    bool crouched;                    // 当前是否处于下蹲状态
 };
 
 struct px_runtime {
@@ -54,6 +56,7 @@ constexpr double k_player_gravity = -9.8;
 constexpr PxReal k_cct_contact_offset = 0.01f;
 constexpr PxReal k_cct_step_offset = 0.5f;
 constexpr PxReal k_cct_slope_limit = 0.0f;
+constexpr double k_player_crouch_height = 1.0;
 
 void set_error(char* err, int err_len, const char* message) {
     if (err == nullptr || err_len <= 0) {
@@ -136,6 +139,21 @@ public:
         return false;
     }
 };
+
+bool has_overlap(PxScene* scene, const PxGeometry& geometry, const PxTransform& pose, const PxRigidActor* ignored_actor) {
+    if (scene == nullptr) {
+        return true;
+    }
+    PxQueryFilterData filter_data(
+        PxQueryFlag::eSTATIC |
+        PxQueryFlag::eDYNAMIC |
+        PxQueryFlag::ePREFILTER |
+        PxQueryFlag::eANY_HIT
+    );
+    IgnoreActorFilter filter_callback(ignored_actor);
+    PxOverlapBuffer overlap;
+    return scene->overlap(geometry, pose, overlap, filter_data, &filter_callback);
+}
 
 PxReal capsule_controller_height(double radius, double height) {
     // CCT height 表示两端球心距离，业务 height 表示胶囊体端到端总高度
@@ -560,7 +578,8 @@ PHYSX_BRIDGE_API int px_world_add_player_capsule(px_world* world, uint64_t playe
 
     const PxReal controller_radius = static_cast<PxReal>(radius);
     const PxReal controller_height = capsule_controller_height(radius, height);
-    if (controller_height <= 0.0f) {
+    const PxReal crouch_height = capsule_controller_height(radius, k_player_crouch_height);
+    if (controller_height <= 0.0f || crouch_height <= 0.0f) {
         set_error(err, err_len, "invalid player controller height");
         return 1;
     }
@@ -596,7 +615,7 @@ PHYSX_BRIDGE_API int px_world_add_player_capsule(px_world* world, uint64_t playe
     // userData 需要同时设置在 controller 和其内部代理 actor 上，保证射线可以返回玩家 ID
     controller->setUserData(reinterpret_cast<void*>(static_cast<uintptr_t>(player_id)));
     actor->userData = reinterpret_cast<void*>(static_cast<uintptr_t>(player_id));
-    world->players[player_id] = player_actor{controller, actor, radius, height, static_cast<double>(k_cct_contact_offset)};
+    world->players[player_id] = player_actor{controller, actor, radius, height, k_player_crouch_height, static_cast<double>(k_cct_contact_offset), false};
     return 0;
 }
 
@@ -617,8 +636,8 @@ PHYSX_BRIDGE_API int px_world_remove_player(px_world* world, uint64_t player_id,
     return 0;
 }
 
-PHYSX_BRIDGE_API int px_world_move_player(px_world* world, uint64_t player_id, px_vec3 direction, double distance, double delta_time, int jump, int grounded, double vertical_velocity, px_vec3* out_position, int* out_blocked, int* out_grounded, double* out_vertical_velocity, char* err, int err_len) {
-    if (world == nullptr || out_position == nullptr || out_blocked == nullptr || out_grounded == nullptr || out_vertical_velocity == nullptr) {
+PHYSX_BRIDGE_API int px_world_move_player(px_world* world, uint64_t player_id, px_vec3 direction, double distance, double delta_time, int jump, int squat, int grounded, double vertical_velocity, px_vec3* out_position, int* out_blocked, int* out_grounded, int* out_crouched, double* out_vertical_velocity, char* err, int err_len) {
+    if (world == nullptr || out_position == nullptr || out_blocked == nullptr || out_grounded == nullptr || out_crouched == nullptr || out_vertical_velocity == nullptr) {
         set_error(err, err_len, "invalid move request");
         return 1;
     }
@@ -649,6 +668,26 @@ PHYSX_BRIDGE_API int px_world_move_player(px_world* world, uint64_t player_id, p
     } else {
         next_vertical_velocity += k_player_gravity * delta_time;
     }
+    bool requested_crouched = squat != 0;
+    if (requested_crouched != iter->second.crouched) {
+        if (requested_crouched) {
+            iter->second.controller->resize(capsule_controller_height(iter->second.radius, iter->second.crouch_height));
+            iter->second.crouched = true;
+            refresh_scene_queries(world->scene);
+        } else {
+            PxExtendedVec3 foot = iter->second.controller->getFootPosition();
+            PxExtendedVec3 center = foot;
+            center.y += static_cast<PxExtended>(iter->second.contact_offset + iter->second.height * 0.5);
+            PxCapsuleGeometry standing_geometry(static_cast<PxReal>(iter->second.radius), capsule_controller_height(iter->second.radius, iter->second.height) * 0.5f);
+            PxTransform standing_pose(PxVec3(static_cast<PxReal>(center.x), static_cast<PxReal>(center.y), static_cast<PxReal>(center.z)), iter->second.actor->getGlobalPose().q);
+            if (!has_overlap(world->scene, standing_geometry, standing_pose, iter->second.actor)) {
+                iter->second.controller->resize(capsule_controller_height(iter->second.radius, iter->second.height));
+                iter->second.crouched = false;
+                refresh_scene_queries(world->scene);
+            }
+        }
+    }
+
     PxVec3 displacement = horizontal + PxVec3(0.0f, static_cast<PxReal>(next_vertical_velocity * delta_time), 0.0f);
 
     PxFilterData filter_data;
@@ -677,6 +716,7 @@ PHYSX_BRIDGE_API int px_world_move_player(px_world* world, uint64_t player_id, p
     *out_position = controller_player_position(iter->second.controller);
     *out_blocked = (side_blocked || ceiling_blocked) ? 1 : 0;
     *out_grounded = is_grounded ? 1 : 0;
+    *out_crouched = iter->second.crouched ? 1 : 0;
     *out_vertical_velocity = next_vertical_velocity;
     return 0;
 }
@@ -710,7 +750,12 @@ PHYSX_BRIDGE_API int px_world_set_player_position(px_world* world, uint64_t play
         set_error(err, err_len, "set player controller position failed");
         return 1;
     }
-    // CCT 内部会把传送结果提交给代理 actor，推进一次零时长场景更新使 scene query 立即可见
+    // 重生同时恢复站立高度，避免逻辑状态与 PhysX 胶囊体姿态不一致
+    if (iter->second.crouched) {
+        iter->second.controller->resize(capsule_controller_height(iter->second.radius, iter->second.height));
+        iter->second.crouched = false;
+    }
+    // CCT 内部会把传送结果提交给代理 actor，推进一次最小正时间步使 scene query 立即可见
     if (!world->scene->simulate(1.0e-6f)) {
         set_error(err, err_len, "update player controller scene failed");
         return 1;

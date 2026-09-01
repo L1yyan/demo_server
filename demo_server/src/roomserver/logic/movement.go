@@ -21,6 +21,7 @@ type authoritativeInput struct {
 	Pitch      float64 // 服务端限制后的垂直视角
 	Fire       bool    // 是否请求开火
 	Jump       bool    // 是否请求跳跃
+	Squat      bool    // 是否请求下蹲
 }
 
 // sanitizePlayerInput 校验并归一化客户端输入
@@ -45,6 +46,7 @@ func sanitizePlayerInput(input *roompb.PlayerInput) (authoritativeInput, bool) {
 		Pitch:      clampFloat(input.Pitch, minPlayerPitch, maxPlayerPitch),
 		Fire:       input.Fire,
 		Jump:       input.Jump,
+		Squat:      input.Squat,
 	}, true
 }
 
@@ -67,6 +69,8 @@ func buildMovePlayerRequest(player *Player, input authoritativeInput, tickRate i
 		Distance:         distance,
 		DeltaTime:        deltaTime,
 		Jump:             input.Jump,
+		Squat:            input.Squat,
+		Crouched:         player.Crouched,
 		Grounded:         player.Grounded,
 		VerticalVelocity: player.VerticalVelocity,
 	}, true
@@ -74,7 +78,7 @@ func buildMovePlayerRequest(player *Player, input authoritativeInput, tickRate i
 
 // shouldMovePlayer 判断本帧是否需要交给物理后端推进
 func shouldMovePlayer(req MovePlayerRequest) bool {
-	return req.Distance > 0 || req.Jump || !req.Grounded || req.VerticalVelocity != 0
+	return req.Distance > 0 || req.Jump || req.Squat != req.Crouched || !req.Grounded || req.VerticalVelocity != 0
 }
 
 // applyViewRotation 更新玩家服务端认可的视角

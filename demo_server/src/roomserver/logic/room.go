@@ -333,6 +333,7 @@ func (r *Room) handleJoinEvent(ctx context.Context, event roomEvent) {
 	player.InvincibleUntilTick = 0
 	player.VerticalVelocity = 0
 	player.Grounded = true
+	player.Crouched = false
 	if err := r.physics.AddPlayer(player.ID, spawnPoint.Position); err != nil {
 		message, _ := protocol.NewProtoMessage(protocol.MsgJoinRoomAck, r.buildJoinAck(false, nil, "physics add player failed"))
 		player.Session.Send(message)
@@ -692,7 +693,7 @@ func (r *Room) updatePlayers(ctx context.Context) {
 		r.clearExpiredInvincibility(player)
 		syncState := r.ensureSyncState(playerID)
 		inputState, hasExactInput := r.inputForTick(syncState, r.tick)
-		if hasExactInput || syncState.hasLastInput || !player.Grounded || player.VerticalVelocity != 0 {
+		if hasExactInput || syncState.hasLastInput || player.Crouched || !player.Grounded || player.VerticalVelocity != 0 {
 			r.simulatePlayerTick(ctx, player, inputState, hasExactInput)
 		}
 		syncState.lastAppliedTick = r.tick
@@ -745,6 +746,7 @@ func (r *Room) simulatePlayerTick(ctx context.Context, player *Player, input aut
 			player.Z = result.Position.Z
 			player.VerticalVelocity = result.VerticalVelocity
 			player.Grounded = result.Grounded
+			player.Crouched = result.Crouched
 		}
 	}
 	if hasExactInput && input.Fire {
@@ -840,6 +842,7 @@ func (r *Room) respawnPlayerAtSpawn(ctx context.Context, player *Player) bool {
 	player.InvincibleUntilTick = r.tick + durationToTicks(defaultRespawnInvincibleDuration, r.tickRate)
 	player.VerticalVelocity = 0
 	player.Grounded = true
+	player.Crouched = false
 	r.discardFutureSyncState(player.ID)
 	glog.Info(ctx, "player respawned", glog.String("room_id", r.id), glog.Uint64("player_id", player.ID), glog.String("spawn_id", player.SpawnID), glog.Int64("server_tick", r.tick), glog.Int64("invincible_until_tick", player.InvincibleUntilTick))
 	return true

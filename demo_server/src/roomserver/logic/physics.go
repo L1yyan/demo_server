@@ -32,6 +32,8 @@ type MovePlayerRequest struct {
 	Distance         float64 // 水平移动距离
 	DeltaTime        float64 // 当前物理步长
 	Jump             bool    // 是否请求跳跃
+	Squat            bool    // 是否请求下蹲
+	Crouched         bool    // 当前是否处于下蹲状态
 	Grounded         bool    // 当前是否处于地面
 	VerticalVelocity float64 // 当前垂直速度
 }
@@ -41,6 +43,7 @@ type MovePlayerResult struct {
 	Position         Vector3 // 物理修正后的坐标
 	Blocked          bool    // 是否被碰撞阻挡
 	Grounded         bool    // 移动后是否处于地面
+	Crouched         bool    // 移动后是否处于下蹲状态
 	VerticalVelocity float64 // 移动后的垂直速度
 }
 
