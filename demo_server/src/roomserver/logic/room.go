@@ -610,7 +610,7 @@ func (r *Room) handleInput(ctx context.Context, playerID uint64, input *roompb.P
 	if !exists || player == nil || !player.Alive {
 		return
 	}
-	sanitized, ok := sanitizePlayerInput(input)
+	sanitized, ok := sanitizePlayerInput(input,r.players[playerID])
 	if !ok {
 		return
 	}

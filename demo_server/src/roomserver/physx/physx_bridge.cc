@@ -828,4 +828,19 @@ PHYSX_BRIDGE_API int px_world_batch_raycast(px_world* world, const px_vec3* orig
     return 0;
 }
 
+PHYSX_BRIDGE_API int px_world_getCCTPosition(px_world* world, uint64_t player_id, px_vec3* out_position, char* err, int err_len) {
+    if(world == nullptr || player_id == 0 ) {
+        set_error(err, err_len, "invalid getCCTPosition request");
+        return 1;
+    }
+    auto iter = world->players.find(player_id);
+    if (iter == world->players.end() || iter->second.controller == nullptr) {
+        set_error(err, err_len, "player not found");
+        return 1;
+    }
+    PxExtendedVec3 position = iter->second.controller->getPosition();
+    *out_position = px_vec3{static_cast<double>(position.x), static_cast<double>(position.y), static_cast<double>(position.z)};
+    return 0;
+}
+
 } // extern "C"

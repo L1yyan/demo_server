@@ -86,7 +86,8 @@ func NewRoomManagerWithOptions(ctx context.Context, maxRooms int, maxPlayersPerR
 
 // JoinRoom 加入房间，不存在时自动创建房间
 func (m *RoomManager) JoinRoom(roomID string, player *Player) error {
-
+	player.Move = Vector3{X: 0, Y: 0, Z: 0}
+	player.LastMove = Vector3{X: 0, Y: 0, Z: 0}
 	if player == nil {
 		return errors.New("player is nil")
 	}

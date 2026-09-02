@@ -7,25 +7,26 @@ import (
 )
 
 const (
-	defaultPlayerMoveSpeed = 4.0   // 玩家默认移动速度，单位/秒
-	defaultWorldLimit      = 100.0 // 简单世界边界，后续替换为地图碰撞
-	minPlayerPitch         = -89.0 // 最小俯仰角
-	maxPlayerPitch         = 89.0  // 最大俯仰角
+	defaultPlayerMoveSpeed = 4.0    // 玩家默认移动速度，单位/秒
+	defaultWorldLimit      = 100.0  // 简单世界边界，后续替换为地图碰撞
+	minPlayerPitch         = -89.0  // 最小俯仰角
+	maxPlayerPitch         = 89.0   // 最大俯仰角
+	accelerationlimit      = 20 / 1 // 摇杆方向移动最大加速度限制
 )
 
 type authoritativeInput struct {
 	ClientTick int64   // 客户端输入帧号
 	MoveX      float64 // 归一化后的左右移动输入
 	MoveZ      float64 // 归一化后的前后移动输入
-	Yaw        float64 // 服务端归一化后的水平视角
-	Pitch      float64 // 服务端限制后的垂直视角
-	Fire       bool    // 是否请求开火
-	Jump       bool    // 是否请求跳跃
-	Squat      bool    // 是否请求下蹲
+	Yaw   float64 // 服务端归一化后的水平视角
+	Pitch float64 // 服务端限制后的垂直视角
+	Fire  bool    // 是否请求开火
+	Jump  bool    // 是否请求跳跃
+	Squat bool    // 是否请求下蹲
 }
 
 // sanitizePlayerInput 校验并归一化客户端输入
-func sanitizePlayerInput(input *roompb.PlayerInput) (authoritativeInput, bool) {
+func sanitizePlayerInput(input *roompb.PlayerInput, player *Player) (authoritativeInput, bool) {
 	if input == nil || !isFinite(input.MoveX) || !isFinite(input.MoveZ) || !isFinite(input.Yaw) || !isFinite(input.Pitch) {
 		return authoritativeInput{}, false
 	}

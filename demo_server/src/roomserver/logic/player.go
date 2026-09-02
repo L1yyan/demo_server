@@ -33,6 +33,8 @@ type Player struct {
 	Grounded            bool    // 是否处于地面
 	Crouched            bool    // 是否处于下蹲状态
 	GunId               int32   //手持武器id
+	Move				Vector3 // 玩家移动方向
+	LastMove 			Vector3 // 上一帧玩家移动方向
 }
 
 // Session logic 层依赖的连接抽象
