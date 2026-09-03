@@ -30,7 +30,8 @@ $RequiredFiles = @(
     (Join-Path $BinDir "roomserver.exe"),
     (Join-Path $BinDir "physx_bridge.dll"),
     (Join-Path $RootDir "config\config.windows.yaml"),
-    (Join-Path $RootDir "config\maps\mfps_arena\collision.json")
+    (Join-Path $RootDir "config\maps\mfps_arena\collision.json"),
+    (Join-Path $PSScriptRoot "stop_all_windows.ps1")
 )
 
 foreach ($Path in $RequiredFiles) {
@@ -61,7 +62,9 @@ Start-Process -FilePath (Join-Path $RootDir "bin\roomserver.exe") -WorkingDirect
 Write-Host "started demo_server with config: $env:DEMO_SERVER_CONFIG"
 '@
 Set-Content -Path (Join-Path $DeployRoot "start_windows.ps1") -Value $StartScript -Encoding UTF8
+Copy-Item -Path (Join-Path $PSScriptRoot "stop_all_windows.ps1") -Destination (Join-Path $DeployRoot "stop_windows.ps1") -Force
 
 Write-Host "[deploy] output: $DeployRoot"
 Write-Host "[deploy] start: powershell -ExecutionPolicy Bypass -File .\start_windows.ps1"
-Write-Host "[deploy] open firewall if external clients connect: TCP 8080, TCP 8090, UDP 9001"
+Write-Host "[deploy] stop: powershell -ExecutionPolicy Bypass -File .\stop_windows.ps1"
+Write-Host "[deploy] open firewall if external clients connect: TCP 8080, TCP 8081, TCP 8090, UDP 9001"

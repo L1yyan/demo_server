@@ -55,7 +55,7 @@ const (
 	defaultRespawnInvincibleDuration = 5 * time.Second
 	defaultFireDamage                = 20
 	defaultFireMaxDistance           = 100.0
-	defaultFireViewHeight            = 0.9
+	defaultFireViewHeight            = 1.7
 	playerStatsQueryTimeout          = time.Second
 	gameOverReasonTimeLimit          = "time_limit"
 )

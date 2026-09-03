@@ -210,9 +210,10 @@ func (s *Server) handleJoinRoom(ctx context.Context, session *Session, message p
 	}
 
 	player := &logic.Player{
-		ID:      claims.PlayerID,
-		RoomID:  claims.RoomID,
-		Session: session,
+		ID:               claims.PlayerID,
+		RoomID:           claims.RoomID,
+		Session:          session,
+		VerticalVelocity: -7.0,
 	}
 	if err := s.manager.JoinRoom(claims.RoomID, player); err != nil {
 		glog.Warn(ctx, "join room failed", glog.String("room_id", claims.RoomID), glog.Uint64("player_id", claims.PlayerID), glog.Err(err))

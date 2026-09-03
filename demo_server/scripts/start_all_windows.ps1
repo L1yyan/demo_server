@@ -39,4 +39,5 @@ foreach ($Service in $Services) {
 }
 
 Write-Host "[start] config: $env:DEMO_SERVER_CONFIG"
-Write-Host "[start] open firewall if external clients connect: TCP 8080, TCP 8090, UDP 9001"
+Write-Host "[start] stop all services: powershell -ExecutionPolicy Bypass -File .\scripts\stop_all_windows.ps1"
+Write-Host "[start] open firewall if external clients connect: TCP 8080, TCP 8081, TCP 8090, UDP 9001"

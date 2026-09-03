@@ -13,8 +13,9 @@ const (
 	minPlayerPitch         = -89.0  // 最小俯仰角
 	maxPlayerPitch         = 89.0   // 最大俯仰角
 	accelerationlimit      = 20 / 1 // 摇杆方向移动最大加速度限制
-	g                      = -13    //重力加速度
-	jumpSpeed              = 5.0    //跳跃初速度
+	g                      = -38    //重力加速度
+	jumpSpeed              = 8.7    //跳跃初速度
+	maxJumpHeight
 )
 
 type authoritativeInput struct {
@@ -98,17 +99,14 @@ func buildMovePlayerRequest(player *Player, input authoritativeInput, tickRate i
 	}
 	//y方向位移向量 不做头顶的碰撞检测，cct自己会处理
 	if player.Grounded && input.Jump {
-		player.VerticalVelocity = jumpSpeed - g*deltaTime
-		yDisp := player.VerticalVelocity * deltaTime
-		disp.Y = yDisp
+		player.VerticalVelocity = jumpSpeed + g*deltaTime
 		// 标记玩家不在地面
 		player.Grounded = false
 	} else if !player.Grounded {
 		// 在空中时计算y方向位移
 		player.VerticalVelocity += g * deltaTime
-		yDisp := player.VerticalVelocity * deltaTime
-		disp.Y = yDisp
 	}
+	disp.Y = player.VerticalVelocity * deltaTime
 
 	return MovePlayerRequest{
 		PlayerID:         player.ID,
