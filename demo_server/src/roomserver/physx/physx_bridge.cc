@@ -636,6 +636,24 @@ PHYSX_BRIDGE_API int px_world_remove_player(px_world* world, uint64_t player_id,
     return 0;
 }
 
+//px_world_set_player_height 设置玩家胶囊体高度
+PHYSX_BRIDGE_API int px_world_set_player_height(px_world* world, uint64_t player_id, double height, double radius, char* err, int err_len) {
+    if (world == nullptr || height <= 0 || player_id == 0) {
+        set_error(err, err_len, "invalid set player height request");
+        return 1;
+    }
+    auto iter = world->players.find(player_id);
+    if (iter == world->players.end() || iter->second.controller == nullptr) {
+        set_error(err, err_len, "player not found");
+        return 1;
+    }
+    // resize只能改变圆柱体部分长度 {（2*r + h）- 2*r } - (2*r+h - height) h是resize前的圆柱体高度
+    iter->second.controller->resize(height - radius * 2.0);
+    return 0;
+
+}
+
+
 PHYSX_BRIDGE_API int px_world_move_player(px_world* world, uint64_t player_id, px_vec3 disp, double delta_time, int jump, int squat,  px_vec3* out_position, int* out_blocked, int* out_grounded, int* out_crouched, double* out_vertical_velocity, char* err, int err_len) {
     if (world == nullptr || out_position == nullptr || out_blocked == nullptr || out_grounded == nullptr || out_crouched == nullptr || out_vertical_velocity == nullptr) {
         set_error(err, err_len, "invalid move request");

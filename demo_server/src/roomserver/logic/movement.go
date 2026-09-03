@@ -98,7 +98,7 @@ func buildMovePlayerRequest(player *Player, input authoritativeInput, tickRate i
 	}
 	//y方向位移向量 不做头顶的碰撞检测，cct自己会处理
 	if player.Grounded && input.Jump {
-		player.VerticalVelocity = jumpSpeed
+		player.VerticalVelocity = jumpSpeed - g*deltaTime
 		yDisp := player.VerticalVelocity * deltaTime
 		disp.Y = yDisp
 		// 标记玩家不在地面
