@@ -636,7 +636,7 @@ PHYSX_BRIDGE_API int px_world_remove_player(px_world* world, uint64_t player_id,
     return 0;
 }
 
-PHYSX_BRIDGE_API int px_world_move_player(px_world* world, uint64_t player_id, px_vec3 direction, double distance, double delta_time, int jump, int squat, int grounded, double vertical_velocity, px_vec3* out_position, int* out_blocked, int* out_grounded, int* out_crouched, double* out_vertical_velocity, char* err, int err_len) {
+PHYSX_BRIDGE_API int px_world_move_player(px_world* world, uint64_t player_id, px_vec3 disp, double delta_time, int jump, int squat,  px_vec3* out_position, int* out_blocked, int* out_grounded, int* out_crouched, double* out_vertical_velocity, char* err, int err_len) {
     if (world == nullptr || out_position == nullptr || out_blocked == nullptr || out_grounded == nullptr || out_crouched == nullptr || out_vertical_velocity == nullptr) {
         set_error(err, err_len, "invalid move request");
         return 1;
@@ -646,28 +646,28 @@ PHYSX_BRIDGE_API int px_world_move_player(px_world* world, uint64_t player_id, p
         set_error(err, err_len, "player not found");
         return 1;
     }
-    if (!valid_vec3(direction) || !std::isfinite(distance) || distance < 0 || !std::isfinite(delta_time) || delta_time <= 0 || !std::isfinite(vertical_velocity)) {
+    if (!valid_vec3(disp) || !std::isfinite(delta_time) || delta_time <= 0) {
         set_error(err, err_len, "invalid move value");
         return 1;
     }
 
-    PxVec3 horizontal = to_px_vec3(direction);
-    PxReal horizontal_length = horizontal.magnitude();
-    if (horizontal_length > 0.0001f && distance > 0) {
-        horizontal = horizontal / horizontal_length * static_cast<PxReal>(distance);
-    } else {
-        horizontal = PxVec3(0.0f);
-    }
+    // PxVec3 horizontal = to_px_vec3(direction);
+    // PxReal horizontal_length = horizontal.magnitude();
+    // if (horizontal_length > 0.0001f && distance > 0) {
+    //     horizontal = horizontal / horizontal_length * static_cast<PxReal>(distance);
+    // } else {
+    //     horizontal = PxVec3(0.0f);
+    // }
 
     // 保留原有跳跃初速度和重力规则，CCT 只负责碰撞推进
-    double next_vertical_velocity = vertical_velocity;
-    if (jump != 0 && grounded != 0) {
-        next_vertical_velocity = k_player_jump_speed + k_player_gravity * delta_time;
-    } else if (grounded != 0) {
-        next_vertical_velocity = 0.0;
-    } else {
-        next_vertical_velocity += k_player_gravity * delta_time;
-    }
+    // double next_vertical_velocity = vertical_velocity;
+    // if (jump != 0 && grounded != 0) {
+    //     next_vertical_velocity = k_player_jump_speed + k_player_gravity * delta_time;
+    // } else if (grounded != 0) {
+    //     next_vertical_velocity = 0.0;
+    // } else {
+    //     next_vertical_velocity += k_player_gravity * delta_time;
+    // }
     bool requested_crouched = squat != 0;
     if (requested_crouched != iter->second.crouched) {
         if (requested_crouched) {
@@ -688,16 +688,16 @@ PHYSX_BRIDGE_API int px_world_move_player(px_world* world, uint64_t player_id, p
         }
     }
 
-    PxVec3 displacement = horizontal + PxVec3(0.0f, static_cast<PxReal>(next_vertical_velocity * delta_time), 0.0f);
+    // PxVec3 displacement = horizontal + PxVec3(0.0f, static_cast<PxReal>(next_vertical_velocity * delta_time), 0.0f);
 
     PxFilterData filter_data;
     IgnoreActorFilter filter_callback(iter->second.actor);
     IgnoreCCTFilter cct_filter;
     PxControllerFilters filters(&filter_data, &filter_callback, &cct_filter);
 
-    // CCT move 内部完成 sweep、碰撞修正和 collide-and-slide，不再推进整个 scene
+    // CCT move
     PxControllerCollisionFlags collision_flags = iter->second.controller->move(
-        displacement,
+        to_px_vec3(disp),
         0.0001f,
         static_cast<PxReal>(delta_time),
         filters
@@ -706,18 +706,18 @@ PHYSX_BRIDGE_API int px_world_move_player(px_world* world, uint64_t player_id, p
     bool side_blocked = collision_flags.isSet(PxControllerCollisionFlag::eCOLLISION_SIDES);
     bool ceiling_blocked = collision_flags.isSet(PxControllerCollisionFlag::eCOLLISION_UP);
     bool is_grounded = collision_flags.isSet(PxControllerCollisionFlag::eCOLLISION_DOWN);
-    if (ceiling_blocked && next_vertical_velocity > 0.0) {
-        next_vertical_velocity = 0.0;
-    }
-    if (is_grounded && next_vertical_velocity <= 0.0) {
-        next_vertical_velocity = 0.0;
-    }
+    // if (ceiling_blocked && next_vertical_velocity > 0.0) {
+    //     next_vertical_velocity = 0.0;
+    // }
+    // if (is_grounded && next_vertical_velocity <= 0.0) {
+    //     next_vertical_velocity = 0.0;
+    // }
 
     *out_position = controller_player_position(iter->second.controller);
     *out_blocked = (side_blocked || ceiling_blocked) ? 1 : 0;
     *out_grounded = is_grounded ? 1 : 0;
     *out_crouched = iter->second.crouched ? 1 : 0;
-    *out_vertical_velocity = next_vertical_velocity;
+    // *out_vertical_velocity = next_vertical_velocity;
     return 0;
 }
 

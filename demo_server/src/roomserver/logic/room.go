@@ -610,7 +610,7 @@ func (r *Room) handleInput(ctx context.Context, playerID uint64, input *roompb.P
 	if !exists || player == nil || !player.Alive {
 		return
 	}
-	sanitized, ok := sanitizePlayerInput(input,r.players[playerID])
+	sanitized, ok := sanitizePlayerInput(input)
 	if !ok {
 		return
 	}
@@ -744,7 +744,7 @@ func (r *Room) simulatePlayerTick(ctx context.Context, player *Player, input aut
 			player.X = result.Position.X
 			player.Y = result.Position.Y
 			player.Z = result.Position.Z
-			player.VerticalVelocity = result.VerticalVelocity
+			player.VerticalVelocity = player.VerticalVelocity
 			player.Grounded = result.Grounded
 			player.Crouched = result.Crouched
 		}

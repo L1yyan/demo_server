@@ -51,7 +51,7 @@ PHYSX_BRIDGE_API int px_world_add_static_box(px_world* world, px_vec3 position, 
 PHYSX_BRIDGE_API int px_world_add_static_mesh(px_world* world, const double* vertices, int vertex_count, const int* triangles, int triangle_count, char* err, int err_len);
 PHYSX_BRIDGE_API int px_world_add_player_capsule(px_world* world, uint64_t player_id, px_vec3 position, double radius, double height, char* err, int err_len);
 PHYSX_BRIDGE_API int px_world_remove_player(px_world* world, uint64_t player_id, char* err, int err_len);
-PHYSX_BRIDGE_API int px_world_move_player(px_world* world, uint64_t player_id, px_vec3 direction, double distance, double delta_time, int jump, int squat, int grounded, double vertical_velocity, px_vec3* out_position, int* out_blocked, int* out_grounded, int* out_crouched, double* out_vertical_velocity, char* err, int err_len);
+PHYSX_BRIDGE_API int px_world_move_player(px_world* world, uint64_t player_id, px_vec3 disp, double delta_time, int jump, int squat,  px_vec3* out_position, int* out_blocked, int* out_grounded, int* out_crouched, double* out_vertical_velocity, char* err, int err_len);
 PHYSX_BRIDGE_API int px_world_get_player_position(px_world* world, uint64_t player_id, px_vec3* out_position, char* err, int err_len);
 PHYSX_BRIDGE_API int px_world_set_player_position(px_world* world, uint64_t player_id, px_vec3 position, char* err, int err_len);
 PHYSX_BRIDGE_API int px_world_raycast(px_world* world, px_vec3 origin, px_vec3 direction, double max_distance, uint32_t mask, uint64_t ignored_player_id, px_raycast_hit* out_hit, char* err, int err_len);

@@ -243,11 +243,11 @@ func (w *World) MovePlayer(req logic.MovePlayerRequest) (logic.MovePlayerResult,
 	if req.Squat {
 		squat = 1
 	}
-	grounded := C.int(0)
-	if req.Grounded {
-		grounded = 1
-	}
-	code := C.px_world_move_player(w.ptr, C.uint64_t(req.PlayerID), toCVec3(req.Direction), C.double(req.Distance), C.double(deltaTime), jump, squat, grounded, C.double(req.VerticalVelocity), &outPosition, &outBlocked, &outGrounded, &outCrouched, &outVerticalVelocity, errBuf, cErrorBufferSize)
+	// grounded := C.int(0)
+	// if req.Grounded {
+	// 	grounded = 1
+	// }
+	code := C.px_world_move_player(w.ptr, C.uint64_t(req.PlayerID), toCVec3(req.Disp), C.double(deltaTime), jump, squat, &outPosition, &outBlocked, &outGrounded, &outCrouched, &outVerticalVelocity, errBuf, cErrorBufferSize)
 	if code != 0 {
 		return logic.MovePlayerResult{}, cError(errBuf, "move physx player")
 	}

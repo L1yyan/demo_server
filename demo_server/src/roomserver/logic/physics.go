@@ -31,6 +31,7 @@ type MovePlayerRequest struct {
 	Direction        Vector3 // 水平移动方向
 	Distance         float64 // 水平移动距离
 	DeltaTime        float64 // 当前物理步长
+	Disp             Vector3 // 位移向量
 	Jump             bool    // 是否请求跳跃
 	Squat            bool    // 是否请求下蹲
 	Crouched         bool    // 当前是否处于下蹲状态

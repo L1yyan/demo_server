@@ -12,6 +12,60 @@ type Vector3 struct {
 	Z float64 // Z轴
 }
 
+// Dot 计算向量点积
+func (v *Vector3) Dot(ov *Vector3) float64 {
+	return v.X*ov.X + v.Y*ov.Y + v.Z*ov.Z
+}
+
+// Len 计算向量长度
+func (v *Vector3) Len() float64 {
+	return vectorLength(*v)
+}
+
+// Mul 计算向量与标量的乘积
+func (v *Vector3) Mul(scalar float64) Vector3 {
+	return Vector3{
+		X: v.X * scalar,
+		Y: v.Y * scalar,
+		Z: v.Z * scalar,
+	}
+}
+
+// Add 计算向量和
+func (v *Vector3) Add(ov *Vector3) Vector3 {
+	return Vector3{
+		X: v.X + ov.X,
+		Y: v.Y + ov.Y,
+		Z: v.Z + ov.Z,
+	}
+}
+
+// sub 计算向量差
+func (v *Vector3) Sub(ov *Vector3) Vector3 {
+	return Vector3{
+		X: v.X - ov.X,
+		Y: v.Y - ov.Y,
+		Z: v.Z - ov.Z,
+	}
+}
+
+func (v *Vector3) SqrMagnitude() float64 {
+	return v.X*v.X + v.Y*v.Y + v.Z*v.Z
+}
+
+// Normalize 归一化向量
+func (v *Vector3) Normalize() Vector3 {
+	length := v.Len()
+	if length == 0 {
+		return Vector3{}
+	}
+	return Vector3{
+		X: v.X / length,
+		Y: v.Y / length,
+		Z: v.Z / length,
+	}
+}
+
 // TODO: 加个equip_id字段
 // Player 房间内玩家状态
 type Player struct {
@@ -33,8 +87,8 @@ type Player struct {
 	Grounded            bool    // 是否处于地面
 	Crouched            bool    // 是否处于下蹲状态
 	GunId               int32   //手持武器id
-	Move				Vector3 // 玩家移动方向
-	LastMove 			Vector3 // 上一帧玩家移动方向
+	Move                Vector3 // 玩家移动方向
+	LastMove            Vector3 // 上一帧玩家移动方向
 }
 
 // Session logic 层依赖的连接抽象
