@@ -1,7 +1,6 @@
 package logic
 
 import (
-	"fmt"
 	"math"
 
 	roompb "demo_server/gen/room"
@@ -66,7 +65,6 @@ func buildMovePlayerRequest(player *Player, input authoritativeInput, tickRate i
 	player.Move = move
 	//去掉上一帧摇杆与当前帧摇杆的反方向分量
 	if player.LastMove.Dot(&player.Move) < 0 {
-		fmt.Println("1")
 		moveNormal := player.Move.Normalize()
 		lastMoveWeightMoveDot := player.Move.Dot(&player.LastMove)
 		lastMoveWeightMove := moveNormal.Mul(lastMoveWeightMoveDot / move.Len())
@@ -76,7 +74,6 @@ func buildMovePlayerRequest(player *Player, input authoritativeInput, tickRate i
 	da := accelerationlimit * (1 / float64(tickRate))
 	dMove := move.Sub(&player.LastMove)
 	if dMove.SqrMagnitude() > da*da {
-		fmt.Println("2")
 		newdMove := dMove.Normalize()
 		newdMove = newdMove.Mul(da)
 		move = player.LastMove.Add(&newdMove)
